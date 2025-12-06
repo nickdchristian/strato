@@ -4,33 +4,66 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'CHANGELOG.md'
 
 jobs:
-  release:
+  bump-and-release:
     runs-on: ubuntu-latest
-    concurrency: release
     permissions:
-      id-token: write
       contents: write
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Calculate Version
+        id: semver
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          version_format: "${major}.${minor}.${patch}"
+          major_pattern: "(MAJOR|BREAKING CHANGE|!)"
+          minor_pattern: "^feat"
+          bump_each_commit: true
+          ignore_pattern: "^(chore|style|docs|ci|test|refactor)"
+          search_commit_body: true
 
-      - name: Set up Python 3.14
-        run: uv python install 3.14
+      - name: Check if Bump Needed
+        if: steps.semver.outputs.version_type == 'none'
+        run: echo "No version bump needed." && exit 0
 
-      - name: Install Dependencies
-        run: uv sync
+      - uses: astral-sh/setup-uv@v5
 
-      - name: Python Semantic Release
+      - name: Update Files and Push
+        if: steps.semver.outputs.version_type != 'none'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.semver.outputs.version }}
+          NEW_TAG: ${{ steps.semver.outputs.version_tag }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          uv run semantic-release version
+          
+          echo "Bumping to $NEW_VERSION"
+          uv version $NEW_VERSION
+          
+          git add pyproject.toml uv.lock
+          git commit -m "chore(release): bump version to $NEW_TAG [skip ci]"
+          
+          git push origin main
+          
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
+
+      - name: Create GitHub Release
+        if: steps.semver.outputs.version_type != 'none'
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.SEMANTIC_RELEASE_TOKEN }}
+          tag_name: ${{ steps.semver.outputs.version_tag }}
+          name: Release ${{ steps.semver.outputs.version_tag }}
+          generate_release_notes: true
