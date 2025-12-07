@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
@@ -79,14 +79,43 @@ class S3SecurityResult(AuditResult):
                 self.risk_reasons.append("Object Lock Disabled")
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if self.creation_date:
-            data["creation_date"] = self.creation_date.isoformat()
+        data = {
+            "resource_arn": self.resource_arn,
+            "resource_name": self.resource_name,
+            "region": self.region,
+            "creation_date": self.creation_date.isoformat()
+            if self.creation_date
+            else None,
+            "risk_score": self.risk_score,
+            "risk_level": self.risk_level,
+            "risk_reasons": self.risk_reasons,
+            "check_type": self.check_type,
+        }
+
+        is_all = self.check_type == S3SecurityScanType.ALL
+
+        if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
+            data["encryption"] = self.encryption
+
+        if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
+            data["public_access_blocked"] = self.public_access_blocked
+
+        if is_all or self.check_type == S3SecurityScanType.ACLS:
+            data["acl_status"] = self.acl_status
+            data["is_log_target"] = self.is_log_target
+
+        if is_all or self.check_type == S3SecurityScanType.VERSIONING:
+            data["versioning"] = self.versioning
+            data["mfa_delete"] = self.mfa_delete
+
+        if is_all or self.check_type == S3SecurityScanType.OBJECT_LOCK:
+            data["object_lock"] = self.object_lock
+
         return data
 
     @classmethod
     def get_headers(cls, check_type: str = S3SecurityScanType.ALL) -> list[str]:
-        base_columns = ["Bucket Name", "Region"]
+        base_columns = ["Bucket Name", "Region", "Creation Date"]
         risk_columns = ["Risk Level", "Reasons"]
 
         if check_type == S3SecurityScanType.ENCRYPTION:
@@ -102,7 +131,23 @@ class S3SecurityResult(AuditResult):
             return base_columns + ["Versioning", "MFA Delete"] + risk_columns
 
         if check_type == S3SecurityScanType.OBJECT_LOCK:
-            return ["Bucket Name", "Region", "Object Lock", "Risk Level", "Reasons"]
+            return base_columns + ["Object Lock"] + risk_columns
+
+        # Case: ALL - Explicitly listed to ensure order matches get_csv_row
+        if check_type == S3SecurityScanType.ALL:
+            return (
+                base_columns
+                + [
+                    "Public Blocked",
+                    "Encryption",
+                    "ACL Status",
+                    "Log Target",
+                    "Versioning",
+                    "MFA Delete",
+                    "Object Lock",
+                ]
+                + risk_columns
+            )
 
         return base_columns + risk_columns
 
@@ -200,25 +245,43 @@ class S3SecurityResult(AuditResult):
         date_render = (
             self.creation_date.isoformat() if self.creation_date else "Unknown"
         )
-        public_render = "Blocked" if self.public_access_blocked else "OPEN"
-        encryption_render = self.encryption
-        acl_render = self.acl_status
-        log_target_render = str(self.is_log_target)
-        risk_reasons_str = "; ".join(self.risk_reasons)
+        row = [self.resource_name, self.region, date_render]
 
-        return [
-            self.resource_name,
-            self.region,
-            date_render,
-            public_render,
-            encryption_render,
-            acl_render,
-            log_target_render,
-            self.versioning,
-            self.mfa_delete,
-            self.risk_level,
-            risk_reasons_str,
-        ]
+        risk_reasons_str = "; ".join(self.risk_reasons)
+        public_render = "Blocked" if self.public_access_blocked else "OPEN"
+
+        # 2. Append Specific Data, must be in a strict order
+        if self.check_type == S3SecurityScanType.ENCRYPTION:
+            row.append(self.encryption)
+
+        elif self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
+            row.append(public_render)
+
+        elif self.check_type == S3SecurityScanType.ACLS:
+            row.append(self.acl_status)
+            row.append(str(self.is_log_target))
+
+        elif self.check_type == S3SecurityScanType.VERSIONING:
+            row.append(self.versioning)
+            row.append(self.mfa_delete)
+
+        elif self.check_type == S3SecurityScanType.OBJECT_LOCK:
+            row.append(self.object_lock)
+
+        elif self.check_type == S3SecurityScanType.ALL:
+            # Must match the order in get_headers(ALL) exactly
+            row.append(public_render)
+            row.append(self.encryption)
+            row.append(self.acl_status)
+            row.append(str(self.is_log_target))
+            row.append(self.versioning)
+            row.append(self.mfa_delete)
+            row.append(self.object_lock)
+
+        row.append(self.risk_level)
+        row.append(risk_reasons_str)
+
+        return row
 
 
 class S3SecurityScanner(BaseScanner[S3SecurityResult]):
