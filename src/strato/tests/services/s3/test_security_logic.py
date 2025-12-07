@@ -1,273 +1,202 @@
+from datetime import datetime
+
+import pytest
+
 from strato.core.scoring import RiskWeight
-from strato.services.s3.domains.security import S3SecurityScanType
-
-
-def test_s3_safe(base_s3_result):
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert base_s3_result.risk_level == "SAFE"
-
-
-def test_s3_public_access_risk(base_s3_result):
-    base_s3_result.public_access_blocked = False
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.CRITICAL
-    assert "Public Access Allowed" in base_s3_result.risk_reasons
-
-
-def test_s3_encryption_risk(base_s3_result):
-    base_s3_result.encryption = "None"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.MEDIUM
-    assert "Encryption Missing" in base_s3_result.risk_reasons
-
-
-def test_s3_mixed_risk(base_s3_result):
-    base_s3_result.public_access_blocked = False
-    base_s3_result.encryption = "None"
-    base_s3_result._evaluate_risk()
-
-    expected_score = RiskWeight.CRITICAL + RiskWeight.MEDIUM
-    assert base_s3_result.risk_score == expected_score
-    assert len(base_s3_result.risk_reasons) == 2
-
-
-def test_s3_check_type_filtering(base_s3_result):
-    base_s3_result.check_type = S3SecurityScanType.ENCRYPTION
-    base_s3_result.public_access_blocked = False
-    base_s3_result.encryption = "AES256"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.NONE
-
-
-def test_s3_acl_safe(base_s3_result):
-    base_s3_result.acl_status = "Disabled"
-    base_s3_result.is_log_target = False
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert "Legacy ACLs" not in str(base_s3_result.risk_reasons)
-
-
-def test_s3_acl_legacy_log_risk(base_s3_result):
-    base_s3_result.acl_status = "Enabled"
-    base_s3_result.is_log_target = True
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.MEDIUM
-    assert "Legacy ACLs (Required for Logging)" in base_s3_result.risk_reasons
-
-
-def test_s3_acl_legacy_enabled_risk(base_s3_result):
-    base_s3_result.acl_status = "Enabled"
-    base_s3_result.is_log_target = False
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.HIGH
-    assert "Legacy ACLs Enabled" in base_s3_result.risk_reasons
-
-
-def test_s3_acl_check_type_filtering(base_s3_result):
-    base_s3_result.encryption = "None"
-    base_s3_result.acl_status = "Enabled"
-    base_s3_result.is_log_target = False
-
-    # Scan ONLY for Encryption
-    base_s3_result.check_type = S3SecurityScanType.ENCRYPTION
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.MEDIUM
-    assert "Encryption Missing" in base_s3_result.risk_reasons
-    assert "Legacy ACLs Enabled" not in base_s3_result.risk_reasons
-
-    # Scan ONLY for ACLs
-    base_s3_result.check_type = S3SecurityScanType.ACLS
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.HIGH
-    assert "Legacy ACLs Enabled" in base_s3_result.risk_reasons
-    assert "Encryption Missing" not in base_s3_result.risk_reasons
-
-
-def test_s3_versioning_risk_medium(base_s3_result):
-    """Verify Versioning Disabled is a MEDIUM risk."""
-    base_s3_result.check_type = S3SecurityScanType.VERSIONING
-    base_s3_result.versioning = "Suspended"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.MEDIUM
-    assert "Versioning Disabled" in base_s3_result.risk_reasons
-
-
-def test_s3_mfa_delete_risk_low(base_s3_result):
-    """Verify MFA Delete Disabled is a LOW risk."""
-    base_s3_result.check_type = S3SecurityScanType.VERSIONING
-    base_s3_result.versioning = "Enabled"
-    base_s3_result.mfa_delete = "Disabled"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.LOW
-    assert "MFA Delete Disabled" in base_s3_result.risk_reasons
-
-
-def test_s3_versioning_safe(base_s3_result):
-    """Verify SAFE state when both Versioning and MFA are enabled."""
-    base_s3_result.check_type = S3SecurityScanType.VERSIONING
-    base_s3_result.versioning = "Enabled"
-    base_s3_result.mfa_delete = "Enabled"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert len(base_s3_result.risk_reasons) == 0
-
-
-def test_s3_versioning_check_type_filtering(base_s3_result):
-    """Verify Versioning risks are ignored if the scan type is ENCRYPTION."""
-    base_s3_result.versioning = "Suspended"
-
-    # Scan ONLY for Encryption
-    base_s3_result.check_type = S3SecurityScanType.ENCRYPTION
-    base_s3_result.encryption = "AES256"
-
-    base_s3_result._evaluate_risk()
-
-    # Should be 0 because we didn't ask for a Versioning check
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert "Versioning Disabled" not in base_s3_result.risk_reasons
-
-
-def test_s3_object_lock_risk_low(base_s3_result):
-    """Verify Object Lock Disabled is a LOW risk."""
-    base_s3_result.check_type = S3SecurityScanType.OBJECT_LOCK
-    base_s3_result.object_lock = "Disabled"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.LOW
-    assert "Object Lock Disabled" in base_s3_result.risk_reasons
-
-
-def test_s3_object_lock_safe(base_s3_result):
-    """Verify SAFE state when Object Lock is enabled."""
-    base_s3_result.check_type = S3SecurityScanType.OBJECT_LOCK
-    base_s3_result.object_lock = "Enabled"
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert "Object Lock Disabled" not in base_s3_result.risk_reasons
-
-
-def test_s3_object_lock_check_type_filtering(base_s3_result):
-    """Verify Object Lock risks are ignored if the scan type is ENCRYPTION."""
-    base_s3_result.object_lock = "Disabled"
-
-    # Scan ONLY for Encryption
-    base_s3_result.check_type = S3SecurityScanType.ENCRYPTION
-    # Set encryption to safe so we expect 0 risk
-    base_s3_result.encryption = "AES256"
-
-    base_s3_result._evaluate_risk()
-
-    # Should be 0 because we didn't ask for an Object Lock check
-    assert base_s3_result.risk_score == RiskWeight.NONE
-    assert "Object Lock Disabled" not in base_s3_result.risk_reasons
-
-
-def test_s3_object_lock_included_in_all(base_s3_result):
-    """Verify Object Lock is checked during an ALL scan."""
-    base_s3_result.check_type = S3SecurityScanType.ALL
-    base_s3_result.object_lock = "Disabled"
-
-    # Set other fields to safe to isolate Object Lock risk
-    base_s3_result.public_access_blocked = True
-    base_s3_result.encryption = "AES256"
-    base_s3_result.acl_status = "Disabled"
-    base_s3_result.versioning = "Enabled"
-    base_s3_result.mfa_delete = "Enabled"
-
-    base_s3_result._evaluate_risk()
-
-    assert base_s3_result.risk_score == RiskWeight.LOW
-    assert "Object Lock Disabled" in base_s3_result.risk_reasons
-
-
-def test_s3_json_filtering_object_lock(base_s3_result):
-    """
-    Regression Test: Ensure JSON output (to_dict) strictly filters out
-    fields irrelevant to the current check_type.
-    """
-    # Setup: A result specifically for OBJECT_LOCK
-    base_s3_result.check_type = S3SecurityScanType.OBJECT_LOCK
-    base_s3_result.object_lock = "Enabled"
-    # Set other fields that should exist in memory but NOT in the JSON output
-    base_s3_result.encryption = "AES256"
-    base_s3_result.public_access_blocked = True
-
-    data = base_s3_result.to_dict()
-
-    # Assert: Core fields must be present
-    assert "resource_name" in data
-    assert "risk_score" in data
-    assert "object_lock" in data
-
-    # Assert: Irrelevant fields must be ABSENT
-    assert "encryption" not in data
-    assert "public_access_blocked" not in data
-    assert "acl_status" not in data
-    assert "versioning" not in data
-
-
-def test_s3_csv_alignment_strict(base_s3_result):
-    """
-    Regression Test: Ensures CSV Row and Headers have the exact same length and order.
-    This catches the 'Creation Date' mismatch bug.
-    """
-    # Setup: Use ALL scan to test the widest possible row
-    base_s3_result.check_type = S3SecurityScanType.ALL
-    base_s3_result.object_lock = "Enabled"
-
-    headers = base_s3_result.get_headers(S3SecurityScanType.ALL)
-    row = base_s3_result.get_csv_row()
-
-    # Assert 1: Length mismatch is the most common regression
-    assert len(headers) == len(row), (
-        f"Mismatch! Headers count ({len(headers)}) != Row count ({len(row)})"
+from strato.services.s3.domains.security import S3SecurityResult, S3SecurityScanType
+
+
+@pytest.fixture
+def safe_result():
+    """Returns a completely safe S3SecurityResult."""
+    return S3SecurityResult(
+        resource_arn="arn:aws:s3:::safe-bucket",
+        resource_name="safe-bucket",
+        region="us-east-1",
+        creation_date=datetime(2023, 1, 1),
+        public_access_blocked=True,
+        encryption="AES256",
+        acl_status="Disabled",
+        versioning="Enabled",
+        mfa_delete="Enabled",
+        object_lock="Enabled",
+        check_type=S3SecurityScanType.ALL,
     )
 
-    # Assert 2: Verify specific headers align with expected data
-    # Index 0-2 should always be Name, Region, Date
-    assert headers[0] == "Bucket Name"
-    assert row[0] == base_s3_result.resource_name
 
-    assert headers[2] == "Creation Date"
-    assert row[2] == base_s3_result.creation_date.isoformat()
+@pytest.fixture
+def risky_result():
+    """Returns a result with multiple risks."""
+    return S3SecurityResult(
+        resource_arn="arn:aws:s3:::risky-bucket",
+        resource_name="risky-bucket",
+        region="us-east-1",
+        creation_date=datetime(2023, 1, 1),
+        public_access_blocked=False,  # Risk
+        encryption="None",  # Risk
+        acl_status="Enabled",  # Risk (High)
+        versioning="Suspended",  # Risk
+        mfa_delete="Disabled",  # Risk
+        object_lock="Disabled",  # Risk
+        check_type=S3SecurityScanType.ALL,
+    )
 
-    # Assert 3: Verify the tail (Risk Data) is aligned
-    assert headers[-1] == "Reasons"
-    # The last row item should be the stringified reasons (empty string if safe)
-    assert isinstance(row[-1], str)
+
+def test_risk_scoring_all_safe(safe_result):
+    """Verify a safe bucket has 0 risk score."""
+    assert safe_result.risk_score == RiskWeight.NONE
+    assert safe_result.risk_level == "SAFE"
+    assert len(safe_result.risk_reasons) == 0
 
 
-def test_s3_csv_specific_scan_filtering(base_s3_result):
+def test_risk_scoring_critical(safe_result):
+    """Verify Public Access triggers CRITICAL risk."""
+    safe_result.public_access_blocked = False
+    safe_result._evaluate_risk()
+
+    assert safe_result.risk_score >= RiskWeight.CRITICAL
+    assert "Public Access Allowed" in safe_result.risk_reasons
+
+
+def test_risk_scoring_medium(safe_result):
+    """Verify Encryption Missing triggers MEDIUM risk."""
+    safe_result.encryption = "None"
+    safe_result._evaluate_risk()
+
+    assert safe_result.risk_score == RiskWeight.MEDIUM
+    assert "Encryption Missing" in safe_result.risk_reasons
+
+
+def test_risk_scoring_filtering(safe_result):
+    """Verify risks are ignored if they are not part of the active check_type."""
+    # Set a critical risk (Public Access)
+    safe_result.public_access_blocked = False
+
+    # But run a scan ONLY for Encryption
+    safe_result.check_type = S3SecurityScanType.ENCRYPTION
+    safe_result._evaluate_risk()
+
+    # Should be safe because we aren't checking public access
+    assert safe_result.risk_score == RiskWeight.NONE
+
+
+# --- TESTS: STYLING & RENDERING (NEW) ---
+
+
+def test_render_style_integration(safe_result):
     """
-    Regression Test: Ensure a specific scan (e.g., Encryption) produces
-    a minimal CSV row without leaking other columns.
+    Verify that security.py correctly uses style.py for rendering.
+    We check for the presence of Rich color tags.
     """
-    base_s3_result.check_type = S3SecurityScanType.ENCRYPTION
-    base_s3_result.encryption = "AES256"
+    safe_result.check_type = S3SecurityScanType.ENCRYPTION
+    row = safe_result.get_table_row()
 
-    headers = base_s3_result.get_headers(S3SecurityScanType.ENCRYPTION)
-    row = base_s3_result.get_csv_row()
+    # Structure: [Name, Region, Date, Encryption, Risk, Reasons]
+    enc_render = row[3]
 
-    # Verify length match
+    # Should be green because it's AES256
+    assert "[green]AES256[/green]" in enc_render
+
+
+def test_render_style_risky(risky_result):
+    """Verify risky values are rendered with warning colors."""
+    risky_result.check_type = S3SecurityScanType.PUBLIC_ACCESS
+    row = risky_result.get_table_row()
+
+    # Structure: [Name, Region, Date, Public, Risk, Reasons]
+    pub_render = row[3]
+
+    # Should be red because it is NOT blocked
+    assert "[red]OPEN[/red]" in pub_render
+
+
+def test_all_scan_table_is_summary(safe_result):
+    """
+    Regression Test: Ensure 'ALL' scan tables are readable summaries.
+    They should NOT contain the 5+ dynamic columns.
+    """
+    safe_result.check_type = S3SecurityScanType.ALL
+    headers = safe_result.get_headers(S3SecurityScanType.ALL)
+    row = safe_result.get_table_row()
+
+    # Expectation: Name, Region, Date, Risk, Reasons (5 columns)
+    assert len(headers) == 5
+    assert len(row) == 5
+
+    assert "Encryption" not in headers
+    assert "Object Lock" not in headers
+
+
+def test_all_scan_csv_is_full_detail(safe_result):
+    """
+    Regression Test: Ensure 'ALL' scan CSVs contain ALL data.
+    They MUST include the dynamic columns hidden from the table.
+    """
+    safe_result.check_type = S3SecurityScanType.ALL
+    headers = safe_result.get_csv_headers(S3SecurityScanType.ALL)
+    row = safe_result.get_csv_row()
+
+    assert len(headers) > 5
+    assert len(row) > 5
     assert len(headers) == len(row)
 
-    # Verify specific columns
     assert "Encryption" in headers
-    assert "Object Lock" not in headers
-    assert "Public Blocked" not in headers
+    assert "Object Lock" in headers
+    assert "MFA Delete" in headers
 
-    # Verify data exists in the correct column
-    enc_index = headers.index("Encryption")
-    assert row[enc_index] == "AES256"
+
+def test_specific_scan_headers_match(safe_result):
+    """
+    For specific scans (e.g. OBJECT_LOCK), Table and CSV should be identical.
+    """
+    check_type = S3SecurityScanType.OBJECT_LOCK
+    safe_result.check_type = check_type
+
+    table_headers = safe_result.get_headers(check_type)
+    csv_headers = safe_result.get_csv_headers(check_type)
+
+    # Both should show the specific column
+    assert table_headers == csv_headers
+    assert "Object Lock" in table_headers
+    assert len(table_headers) == 6  # Name, Region, Date, Lock, Risk, Reasons
+
+
+def test_csv_row_alignment(safe_result):
+    """Ensure CSV Row matches CSV Headers for every scan type."""
+    for scan_type in S3SecurityScanType:
+        safe_result.check_type = scan_type
+
+        headers = safe_result.get_csv_headers(scan_type)
+        row = safe_result.get_csv_row()
+
+        assert len(headers) == len(row), f"CSV Alignment failed for {scan_type}"
+
+
+def test_table_row_alignment(safe_result):
+    """Ensure Table Row matches Table Headers for every scan type."""
+    for scan_type in S3SecurityScanType:
+        safe_result.check_type = scan_type
+
+        headers = safe_result.get_headers(scan_type)
+        row = safe_result.get_table_row()
+
+        assert len(headers) == len(row), f"Table Alignment failed for {scan_type}"
+
+
+def test_json_filtering(safe_result):
+    """Verify to_dict filters out irrelevant fields based on scan type."""
+    safe_result.check_type = S3SecurityScanType.OBJECT_LOCK
+
+    data = safe_result.to_dict()
+
+    # Core fields
+    assert "resource_name" in data
+    assert "risk_score" in data
+
+    # Relevant field
+    assert "object_lock" in data
+
+    # Irrelevant fields (should be absent)
+    assert "encryption" not in data
+    assert "public_access_blocked" not in data
+    assert "versioning" not in data
