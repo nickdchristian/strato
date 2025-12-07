@@ -74,3 +74,46 @@ class S3Client:
             return encryption_type or "Unknown"
         except ClientError:
             return "None"
+
+    def get_acl_status(self, bucket_name: str) -> str:
+        """
+        Returns 'Disabled' if BucketOwnerEnforced, otherwise 'Enabled'.
+        """
+        try:
+            response = self._client.get_bucket_ownership_controls(Bucket=bucket_name)
+            rules = response.get("OwnershipControls", {}).get("Rules", [])
+
+            if not rules:
+                return "Enabled"
+
+            ownership = rules[0].get("ObjectOwnership")
+            return "Disabled" if ownership == "BucketOwnerEnforced" else "Enabled"
+
+        except ClientError:
+            return "Enabled"
+
+    def is_log_target(self, bucket_name: str) -> bool:
+        """
+        Checks if bucket is a target for S3 or CloudFront legacy logging.
+        """
+        cloudfront_log_delivery_id = (
+            "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0"
+        )
+        s3_log_delivery_uri = "http://acs.amazonaws.com/groups/s3/LogDelivery"
+
+        try:
+            acl = self._client.get_bucket_acl(Bucket=bucket_name)
+            for grant in acl.get("Grants", []):
+                grantee = grant.get("Grantee", {})
+
+                if grantee.get("URI") == s3_log_delivery_uri:
+                    return True
+
+                if (
+                    grantee.get("Type") == "CanonicalUser"
+                    and grantee.get("ID") == cloudfront_log_delivery_id
+                ):
+                    return True
+            return False
+        except ClientError:
+            return False

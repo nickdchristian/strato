@@ -14,6 +14,7 @@ class S3SecurityScanType(StrEnum):
     ALL = auto()
     ENCRYPTION = auto()
     PUBLIC_ACCESS = auto()
+    ACLS = auto()
 
 
 @dataclass
@@ -25,6 +26,8 @@ class S3SecurityResult(AuditResult):
     creation_date: datetime = None
     public_access_blocked: bool = False
     encryption: str = "None"
+    acl_status: str = "Unknown"
+    is_log_target: bool = False
     check_type: str = S3SecurityScanType.ALL
 
     def __post_init__(self):
@@ -42,7 +45,6 @@ class S3SecurityResult(AuditResult):
         self.risk_score = 0
         self.risk_reasons = []
 
-        # Check: Public Access Block
         if self.check_type in [
             S3SecurityScanType.ALL,
             S3SecurityScanType.PUBLIC_ACCESS,
@@ -51,11 +53,19 @@ class S3SecurityResult(AuditResult):
                 self.risk_score += RiskWeight.CRITICAL
                 self.risk_reasons.append("Public Access Allowed")
 
-        # Check: Default Encryption
         if self.check_type in [S3SecurityScanType.ALL, S3SecurityScanType.ENCRYPTION]:
             if self.encryption == "None":
                 self.risk_score += RiskWeight.MEDIUM
                 self.risk_reasons.append("Encryption Missing")
+
+        if self.check_type in [S3SecurityScanType.ALL, S3SecurityScanType.ACLS]:
+            if self.acl_status == "Enabled":
+                if self.is_log_target:
+                    self.risk_score += RiskWeight.MEDIUM
+                    self.risk_reasons.append("Legacy ACLs (Required for Logging)")
+                else:
+                    self.risk_score += RiskWeight.HIGH
+                    self.risk_reasons.append("Legacy ACLs Enabled")
 
     def to_dict(self) -> dict[str, Any]:
         """Override to handle datetime serialization."""
@@ -76,9 +86,18 @@ class S3SecurityResult(AuditResult):
         if check_type == S3SecurityScanType.PUBLIC_ACCESS:
             return base_columns + ["Public Blocked"] + risk_columns
 
+        if check_type == S3SecurityScanType.ACLS:
+            return base_columns + ["ACL Status", "Log Target"] + risk_columns
+
         return (
             base_columns
-            + ["Creation Date", "Public Blocked", "Encryption"]
+            + [
+                "Creation Date",
+                "Public Blocked",
+                "Encryption",
+                "ACL Status",
+                "Log Target",
+            ]
             + risk_columns
         )
 
@@ -102,10 +121,21 @@ class S3SecurityResult(AuditResult):
         else:
             encryption_render = f"[green]{self.encryption}[/green]"
 
+        if self.acl_status == "Disabled":
+            acl_render = "[green]Disabled[/green]"
+        elif self.is_log_target:
+            acl_render = "[yellow]Enabled (Logs)[/yellow]"
+        else:
+            acl_render = "[red]Enabled[/red]"
+
+        log_target_render = "Yes" if self.is_log_target else "No"
+
         return self._build_row(
             date_render,
             public_access_render,
             encryption_render,
+            acl_render,
+            log_target_render,
             risk_level_render,
             risk_reasons_render,
         )
@@ -121,11 +151,15 @@ class S3SecurityResult(AuditResult):
         )
         public_access_render = "Blocked" if self.public_access_blocked else "OPEN"
         encryption_render = self.encryption
+        acl_render = self.acl_status
+        log_target_render = str(self.is_log_target)
 
         return self._build_row(
             date_render,
             public_access_render,
             encryption_render,
+            acl_render,
+            log_target_render,
             risk_level_render,
             risk_reasons_render,
         )
@@ -135,6 +169,8 @@ class S3SecurityResult(AuditResult):
         date_render,
         public_access_render,
         encryption_render,
+        acl_render,
+        log_target_render,
         risk_level_render,
         risk_reasons_render,
     ) -> list[str]:
@@ -157,12 +193,24 @@ class S3SecurityResult(AuditResult):
                 risk_reasons_render,
             ]
 
+        if self.check_type == S3SecurityScanType.ACLS or self.check_type == "acls":
+            return [
+                self.resource_name,
+                self.region,
+                acl_render,
+                log_target_render,
+                risk_level_render,
+                risk_reasons_render,
+            ]
+
         return [
             self.resource_name,
             self.region,
             date_render,
             public_access_render,
             encryption_render,
+            acl_render,
+            log_target_render,
             risk_level_render,
             risk_reasons_render,
         ]
@@ -199,6 +247,12 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
 
         public_access_blocked = self.client.get_public_access_status(bucket_name)
         encryption = self.client.get_encryption_status(bucket_name)
+
+        acl_status = self.client.get_acl_status(bucket_name)
+        is_log_target = False
+        if acl_status == "Enabled":
+            is_log_target = self.client.is_log_target(bucket_name)
+
         check_type = self.check_type
 
         return S3SecurityResult(
@@ -208,5 +262,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
             creation_date=creation_date,
             public_access_blocked=public_access_blocked,
             encryption=encryption,
+            acl_status=acl_status,
+            is_log_target=is_log_target,
             check_type=check_type,
         )
