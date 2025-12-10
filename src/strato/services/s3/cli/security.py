@@ -89,6 +89,31 @@ def public_access_scan(
     )
 
 
+@app.command("policy")
+def policy_scan(
+    verbose: bool = False,
+    fail_on_risk: bool = typer.Option(
+        False, "--fail-on-risk", help="Exit code 1 if risks found"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output JSON"),
+    csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
+    failures_only: bool = typer.Option(
+        False, "--failures-only", help="Show failures only"
+    ),
+):
+    """Scan ONLY for bucket policy compliance."""
+    run_scan(
+        S3SecurityScanner,
+        S3SecurityResult,
+        S3SecurityScanType.POLICY,
+        verbose,
+        fail_on_risk,
+        json_output,
+        csv_output,
+        failures_only,
+    )
+
+
 @app.command("acls")
 def acl_scan(
     verbose: bool = False,

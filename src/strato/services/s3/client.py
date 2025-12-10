@@ -1,3 +1,5 @@
+import json
+
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -53,6 +55,51 @@ class S3Client:
         except ClientError:
             # If we can't read the config, assume it's not blocked (fail safe)
             return False
+
+    def get_bucket_policy(self, bucket_name: str) -> dict:
+        """
+        Scans a bucket policy to determine:
+        1. How public the bucket is (String: Public, Potentially Public, Private)
+        2. If SSL is strictly enforced (Boolean)
+        """
+        policy_assessment = {"Access": "Private", "SSL_Enforced": False}
+
+        try:
+            response = self._client.get_bucket_policy(Bucket=bucket_name)
+            raw_bucket_policy = response.get("Policy", "{}")
+            bucket_policy = json.loads(raw_bucket_policy)
+
+            for statement in bucket_policy.get("Statement", []):
+                if statement.get("Effect") == "Deny":
+                    condition = statement.get("Condition", {})
+                    bool_block = condition.get("Bool", {})
+                    if str(bool_block.get("aws:SecureTransport")).lower() == "false":
+                        policy_assessment["SSL_Enforced"] = True
+
+                if statement.get("Effect") == "Allow":
+                    if policy_assessment["Access"] == "Public":
+                        continue
+
+                    principal = statement.get("Principal")
+                    if isinstance(principal, dict) and principal.get("AWS") == "*":
+                        if statement.get("Condition"):
+                            policy_assessment["Access"] = "Potentially Public"
+                        else:
+                            policy_assessment["Access"] = "Public"
+
+                    elif principal == "*":
+                        if statement.get("Condition"):
+                            policy_assessment["Access"] = "Potentially Public"
+                        else:
+                            policy_assessment["Access"] = "Public"
+
+            return policy_assessment
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchBucketPolicy":
+                return policy_assessment
+            else:
+                return {"Access": "Error", "SSL_Enforced": False}
 
     def get_encryption_status(self, bucket_name: str) -> dict:
         """
