@@ -55,6 +55,7 @@ $ sto s3 security [OPTIONS] COMMAND [ARGS]...
 * `all`: Run ALL S3 Security checks (Encryption and...
 * `encryption`: Scan ONLY for default encryption...
 * `public-access`: Scan ONLY for public access blocks.
+* `policy`: Scan ONLY for bucket policy compliance.
 * `acls`: Scan ONLY for Legacy ACL usage and Log...
 * `versioning`: Scan for Versioning and MFA Delete...
 * `object-lock`: Scan for Object Lock configuration.
@@ -105,6 +106,25 @@ Scan ONLY for public access blocks.
 
 ```console
 $ sto s3 security public-access [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--fail-on-risk`: Exit code 1 if risks found
+* `--json`: Output JSON
+* `--csv`: Output CSV
+* `--failures-only`: Show failures only
+* `--help`: Show this message and exit.
+
+#### `sto s3 security policy`
+
+Scan ONLY for bucket policy compliance.
+
+**Usage**:
+
+```console
+$ sto s3 security policy [OPTIONS]
 ```
 
 **Options**:

@@ -15,6 +15,7 @@ class S3SecurityScanType(StrEnum):
     ALL = auto()
     ENCRYPTION = auto()
     PUBLIC_ACCESS = auto()
+    POLICY = auto()
     ACLS = auto()
     VERSIONING = auto()
     OBJECT_LOCK = auto()
@@ -28,6 +29,8 @@ class S3SecurityResult(AuditResult):
 
     creation_date: datetime = None
     public_access_blocked: bool = False
+    policy_access: str = "Unknown"
+    ssl_enforced: bool = False
     encryption: str = "None"
     sse_c_blocked: bool = False
     acl_status: str = "Unknown"
@@ -51,14 +54,27 @@ class S3SecurityResult(AuditResult):
                 self.risk_score += RiskWeight.CRITICAL
                 self.risk_reasons.append("Public Access Allowed")
 
+        if is_all or self.check_type == S3SecurityScanType.POLICY:
+            if not self.ssl_enforced:
+                self.risk_score += RiskWeight.MEDIUM
+                self.risk_reasons.append("SSL Not Enforced")
+            if self.policy_access == "Public":
+                self.risk_score += RiskWeight.CRITICAL
+                self.risk_reasons.append("Bucket Policy Allows Public Access")
+            if self.policy_access == "Potentially Public":
+                self.risk_score += RiskWeight.HIGH
+                self.risk_reasons.append(
+                    "Bucket Policy Potentially Allows Public Access"
+                )
+
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
             if self.encryption == "None":
                 self.risk_score += RiskWeight.MEDIUM
                 self.risk_reasons.append("Encryption Missing")
 
-        if not self.sse_c_blocked:
-            self.risk_score += RiskWeight.LOW
-            self.risk_reasons.append("SSE-C Not Blocked")
+            if not self.sse_c_blocked:
+                self.risk_score += RiskWeight.LOW
+                self.risk_reasons.append("SSE-C Not Blocked")
 
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             if self.acl_status == "Enabled":
@@ -101,6 +117,24 @@ class S3SecurityResult(AuditResult):
                 )
             )
 
+        if is_all or self.check_type == S3SecurityScanType.POLICY:
+            columns.append(
+                (
+                    "Policy Access",
+                    "policy_access",
+                    self.policy_access,
+                    self._render_policy_access,
+                )
+            )
+
+            columns.append(
+                (
+                    "SSL Enforced",
+                    "ssl_enforced",
+                    self.ssl_enforced,
+                    self._render_ssl_enforced,
+                )
+            )
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
             columns.append(
                 ("Encryption", "encryption", self.encryption, self._render_encryption)
@@ -242,6 +276,20 @@ class S3SecurityResult(AuditResult):
         return colorize("OPEN", AuditStatus.FAIL)
 
     @property
+    def _render_policy_access(self):
+        if self.policy_access == "Private":
+            return colorize(self.policy_access, AuditStatus.PASS)
+        if self.policy_access == "Potentially Public":
+            return colorize(self.policy_access, AuditStatus.WARN)
+        return colorize(self.policy_access, AuditStatus.FAIL)
+
+    @property
+    def _render_ssl_enforced(self):
+        if self.ssl_enforced:
+            return colorize(self.ssl_enforced, AuditStatus.PASS)
+        return colorize(self.ssl_enforced, AuditStatus.FAIL)
+
+    @property
     def _render_acl(self):
         if self.acl_status == "Disabled":
             return colorize("Disabled", AuditStatus.PASS)
@@ -286,6 +334,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         creation_date = bucket_data["CreationDate"]
 
         public_access_blocked = False
+        bucket_policy_config = {"Access": "Private", "SSL_Enforced": False}
         encryption = "None"
         sse_c_blocked = False
         acl_status = "Unknown"
@@ -297,6 +346,9 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
 
         if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
             public_access_blocked = self.client.get_public_access_status(bucket_name)
+
+        if is_all or self.check_type == S3SecurityScanType.POLICY:
+            bucket_policy_config = self.client.get_bucket_policy(bucket_name)
 
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
             enc_status = self.client.get_encryption_status(bucket_name)
@@ -320,6 +372,8 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
             region=region,
             creation_date=creation_date,
             public_access_blocked=public_access_blocked,
+            policy_access=bucket_policy_config["Access"],
+            ssl_enforced=bucket_policy_config["SSL_Enforced"],
             encryption=encryption,
             sse_c_blocked=sse_c_blocked,
             acl_status=acl_status,
