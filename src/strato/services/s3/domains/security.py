@@ -32,13 +32,13 @@ class S3SecurityResult(AuditResult):
     account_id: str
 
     creation_date: datetime = None
-    public_access_blocked: bool = False
+    public_access_block_status: bool = False
     policy_access: str = "Unknown"
     ssl_enforced: bool = False
     encryption: str = "None"
-    sse_c_blocked: bool = False
+    sse_c: bool = False
     acl_status: str = "Unknown"
-    is_log_target: bool = False
+    log_target: bool = False
     versioning: str = "Suspended"
     mfa_delete: str = "Disabled"
     object_lock: str = "Disabled"
@@ -56,7 +56,7 @@ class S3SecurityResult(AuditResult):
         is_all = self.check_type == S3SecurityScanType.ALL
 
         if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
-            if not self.public_access_blocked:
+            if not self.public_access_block_status:
                 self.risk_score += RiskWeight.CRITICAL
                 self.risk_reasons.append("Public Access Allowed")
 
@@ -78,13 +78,13 @@ class S3SecurityResult(AuditResult):
                 self.risk_score += RiskWeight.MEDIUM
                 self.risk_reasons.append("Encryption Missing")
 
-            if not self.sse_c_blocked:
+            if not self.sse_c:
                 self.risk_score += RiskWeight.LOW
                 self.risk_reasons.append("SSE-C Not Blocked")
 
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             if self.acl_status == "Enabled":
-                if self.is_log_target:
+                if self.log_target:
                     self.risk_score += RiskWeight.MEDIUM
                     self.risk_reasons.append("Legacy ACLs (Required for Logging)")
                 else:
@@ -129,10 +129,10 @@ class S3SecurityResult(AuditResult):
         if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
             columns.append(
                 (
-                    "Public Access Block",
-                    "public_access_blocked",
-                    self.public_access_blocked,
-                    self._render_public,
+                    "Public Access Block Status",
+                    "public_access_blocked_status",
+                    self.public_access_block_status,
+                    self._render_public_access_block,
                 )
             )
 
@@ -160,9 +160,9 @@ class S3SecurityResult(AuditResult):
             )
             columns.append(
                 (
-                    "SSE-C Blocked",
-                    "sse_c_blocked",
-                    self.sse_c_blocked,
+                    "SSE-C",
+                    "sse_c",
+                    self.sse_c,
                     self._render_ssec,
                 )
             )
@@ -174,9 +174,9 @@ class S3SecurityResult(AuditResult):
             columns.append(
                 (
                     "Log Target",
-                    "is_log_target",
-                    self.is_log_target,
-                    "Yes" if self.is_log_target else "No",
+                    "log_target",
+                    self.log_target,
+                    "Yes" if self.log_target else "No",
                 )
             )
 
@@ -185,12 +185,17 @@ class S3SecurityResult(AuditResult):
                 ("Versioning", "versioning", self.versioning, self._render_versioning)
             )
             columns.append(
-                ("MFA Delete", "mfa_delete", self.mfa_delete, self._render_mfa)
+                ("MFA Delete", "mfa_delete", self.mfa_delete, self._render_mfa_delete)
             )
 
         if is_all or self.check_type == S3SecurityScanType.OBJECT_LOCK:
             columns.append(
-                ("Object Lock", "object_lock", self.object_lock, self._render_lock)
+                (
+                    "Object Lock",
+                    "object_lock",
+                    self.object_lock,
+                    self._render_object_lock,
+                )
             )
 
         if is_all or self.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
@@ -310,13 +315,13 @@ class S3SecurityResult(AuditResult):
 
     @property
     def _render_ssec(self):
-        if self.sse_c_blocked:
+        if self.sse_c:
             return colorize("Blocked", AuditStatus.PASS)
         return colorize("Allowed", AuditStatus.WARN)
 
     @property
-    def _render_public(self):
-        if self.public_access_blocked:
+    def _render_public_access_block(self):
+        if self.public_access_block_status:
             return colorize("Blocked", AuditStatus.PASS)
         return colorize("OPEN", AuditStatus.FAIL)
 
@@ -339,8 +344,8 @@ class S3SecurityResult(AuditResult):
         if self.acl_status == "Disabled":
             return colorize("Disabled", AuditStatus.PASS)
 
-        status_text = "Enabled (Logs)" if self.is_log_target else "Enabled"
-        color = AuditStatus.WARN if self.is_log_target else AuditStatus.FAIL
+        status_text = "Enabled (Logs)" if self.log_target else "Enabled"
+        color = AuditStatus.WARN if self.log_target else AuditStatus.FAIL
 
         return colorize(status_text, color)
 
@@ -350,12 +355,12 @@ class S3SecurityResult(AuditResult):
         return colorize(self.versioning, color)
 
     @property
-    def _render_mfa(self):
+    def _render_mfa_delete(self):
         color = AuditStatus.PASS if self.mfa_delete == "Enabled" else AuditStatus.WARN
         return colorize(self.mfa_delete, color)
 
     @property
-    def _render_lock(self):
+    def _render_object_lock(self):
         color = AuditStatus.PASS if self.object_lock == "Enabled" else AuditStatus.WARN
         return colorize(self.object_lock, color)
 
@@ -422,7 +427,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             acl_status = self.client.get_acl_status(bucket_name)
             if acl_status == "Enabled":
-                is_log_target = self.client.is_log_target(bucket_name)
+                is_log_target = self.client.log_target(bucket_name)
 
         if is_all or self.check_type == S3SecurityScanType.VERSIONING:
             version_config = self.client.get_versioning_status(bucket_name)
@@ -442,13 +447,13 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
             resource_name=bucket_name,
             region=region,
             creation_date=creation_date,
-            public_access_blocked=public_access_blocked,
+            public_access_block_status=public_access_blocked,
             policy_access=bucket_policy_config["Access"],
             ssl_enforced=bucket_policy_config["SSL_Enforced"],
             encryption=encryption,
-            sse_c_blocked=sse_c_blocked,
+            sse_c=sse_c_blocked,
             acl_status=acl_status,
-            is_log_target=is_log_target,
+            log_target=is_log_target,
             versioning=version_config["Status"],
             mfa_delete=version_config["MFADelete"],
             object_lock=object_lock,

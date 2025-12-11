@@ -171,11 +171,14 @@ def run_scan(
     elif csv_output:
         presenter.print_csv()
     else:
-        title_suffix = " [Failures Only]" if failures_only else ""
-        title_prefix = "Organization " if org_role else ""
-        presenter.print_table(
-            title=f"{title_prefix}{scanner_cls(check_type).service_name}{title_suffix}"
-        )
+        if all_results:
+            title_suffix = " [Failures Only]" if failures_only else ""
+            title_prefix = "Organization " if org_role else ""
+            presenter.print_table(
+                title=f"{title_prefix}{scanner_cls(check_type).service_name}{title_suffix}"
+            )
+        else:
+            console.print("[bold blue]No Results Found[/bold blue]")
 
     if fail_on_risk and any(result.has_risk for result in all_results):
         sys.exit(1)
