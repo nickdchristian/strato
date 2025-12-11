@@ -26,5 +26,6 @@ def base_s3_result():
         versioning="Enabled",
         mfa_delete="Enabled",
         object_lock="Enabled",
+        website_hosting=False,
         check_type=S3SecurityScanType.ALL,
     )

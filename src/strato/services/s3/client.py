@@ -198,3 +198,13 @@ class S3Client:
             if e.response["Error"]["Code"] == "ObjectLockConfigurationNotFoundError":
                 return "Disabled"
             return "Unknown"
+
+    def get_website_hosting_status(self, bucket_name: str) -> bool:
+        """Checks if static website hosting is enabled."""
+        try:
+            self._client.get_bucket_website(Bucket=bucket_name)
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchWebsiteConfiguration":
+                return False
+            raise e
