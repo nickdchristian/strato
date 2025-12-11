@@ -60,6 +60,7 @@ $ sto s3 security [OPTIONS] COMMAND [ARGS]...
 * `versioning`: Scan for Versioning and MFA Delete...
 * `object-lock`: Scan for Object Lock configuration.
 * `name_predictability`: Scan for Object Lock configuration.
+* `website`: Scan for Static Website Hosting...
 
 #### `sto s3 security all`
 
@@ -202,6 +203,25 @@ Scan for Object Lock configuration.
 
 ```console
 $ sto s3 security name_predictability [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--fail-on-risk`
+* `--json`
+* `--csv`
+* `--failures-only`
+* `--help`: Show this message and exit.
+
+#### `sto s3 security website`
+
+Scan for Static Website Hosting configuration.
+
+**Usage**:
+
+```console
+$ sto s3 security website [OPTIONS]
 ```
 
 **Options**:

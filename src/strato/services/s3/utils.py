@@ -22,9 +22,6 @@ def get_bucket_name_predictability(bucket_name: str) -> str:
         probability = frequency / bucket_name_length
         entropy -= probability * math.log2(probability)
 
-    print(has_guid_fragment)
-    print(entropy)
-
     if has_guid_fragment and entropy > 3.0:
         return "LOW"
     elif entropy < 2.5 or len(bucket_name) < 8:

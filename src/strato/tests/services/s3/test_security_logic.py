@@ -343,3 +343,81 @@ def test_policy_json_structure(policy_result):
 
     assert data["policy_access"] == "Public"
     assert data["ssl_enforced"] is False
+
+
+@pytest.fixture
+def website_result():
+    """Returns a result initialized for Website Hosting scanning."""
+    return S3SecurityResult(
+        resource_arn="arn:aws:s3:::website-bucket-123",
+        resource_name="website-bucket-123",
+        region="us-east-1",
+        creation_date=datetime(2023, 1, 1),
+        # Default safe state
+        website_hosting=False,
+        check_type=S3SecurityScanType.WEBSITE_HOSTING,
+    )
+
+
+def test_website_scoring_safe(website_result):
+    """Verify that disabled website hosting triggers no risk."""
+    website_result.website_hosting = False
+    website_result._evaluate_risk()
+
+    assert website_result.risk_score == RiskWeight.NONE
+    assert len(website_result.risk_reasons) == 0
+
+
+def test_website_scoring_risky(website_result):
+    """Verify that enabled website hosting triggers HIGH risk."""
+    website_result.website_hosting = True
+    website_result._evaluate_risk()
+
+    assert website_result.risk_score == RiskWeight.HIGH
+    # UPDATED: Matches "Static Website Hosting Enabled" from security.py
+    assert "Static Website Hosting Enabled" in website_result.risk_reasons
+
+
+def test_website_render_style_safe(website_result):
+    """Verify safe values render with green PASS color."""
+    website_result.website_hosting = False
+    row = website_result.get_table_row()
+
+    # Structure: [Name, Region, Date, Website Hosting, Risk, Reasons]
+    render = row[3]
+
+    # UPDATED: Matches "Disabled" string from security.py
+    assert "Disabled" in str(render)
+    assert "green" in str(render)  # AuditStatus.PASS
+
+
+def test_website_render_style_risky(website_result):
+    """Verify enabled values render with yellow WARN color."""
+    website_result.website_hosting = True
+    row = website_result.get_table_row()
+
+    render = row[3]
+
+    # UPDATED: Matches "Enabled" string from security.py
+    assert "Enabled" in str(render)
+    assert "yellow" in str(render)  # AuditStatus.WARN
+
+
+def test_website_csv_headers(website_result):
+    """Verify CSV headers include the Website Hosting column."""
+    headers = website_result.get_csv_headers(S3SecurityScanType.WEBSITE_HOSTING)
+
+    assert "Website Hosting" in headers
+
+    # Should NOT include unrelated columns
+    assert "Encryption" not in headers
+    assert "Object Lock" not in headers
+
+
+def test_website_json_structure(website_result):
+    """Verify to_dict includes website hosting fields."""
+    website_result.website_hosting = True
+    data = website_result.to_dict()
+
+    assert "website_hosting" in data
+    assert data["website_hosting"] is True

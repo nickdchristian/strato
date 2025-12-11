@@ -26,6 +26,13 @@ def test_scanner_analyze_resource(mock_client_cls):
         "MFADelete": "Enabled",
     }
 
+    mock_client.get_website_hosting_status.return_value = False
+
+    mock_client.get_bucket_policy.return_value = {
+        "Access": "Private",
+        "SSL_Enforced": True,
+    }
+
     raw_bucket_data = {
         "Name": "risk-bucket-a1b2c3d4",
         "BucketArn": "arn:aws:s3:::risk-bucket-a1b2c3d4",

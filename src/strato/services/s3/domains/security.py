@@ -21,6 +21,7 @@ class S3SecurityScanType(StrEnum):
     VERSIONING = auto()
     OBJECT_LOCK = auto()
     NAME_PREDICTABILITY = auto()
+    WEBSITE_HOSTING = auto()
 
 
 @dataclass
@@ -41,6 +42,7 @@ class S3SecurityResult(AuditResult):
     mfa_delete: str = "Disabled"
     object_lock: str = "Disabled"
     name_predictability: str = "LOW"
+    website_hosting: bool | None = None
     check_type: str = S3SecurityScanType.ALL
 
     def __post_init__(self):
@@ -108,6 +110,11 @@ class S3SecurityResult(AuditResult):
             if self.name_predictability == "MODERATE":
                 self.risk_score += RiskWeight.NONE
                 self.risk_reasons.append("Moderately Predictable Bucket Name")
+
+        if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
+            if self.website_hosting:
+                self.risk_score += RiskWeight.HIGH
+                self.risk_reasons.append("Static Website Hosting Enabled")
 
     def _get_scan_columns(self) -> list[tuple[str, str, Any, str]]:
         """
@@ -192,6 +199,15 @@ class S3SecurityResult(AuditResult):
                     "name_predictability",
                     self.name_predictability,
                     self._render_name_predictability,
+                )
+            )
+        if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
+            columns.append(
+                (
+                    "Website Hosting",
+                    "website_hosting",
+                    self.website_hosting,
+                    self._render_website_hosting,
                 )
             )
 
@@ -341,6 +357,12 @@ class S3SecurityResult(AuditResult):
             return colorize(self.name_predictability, AuditStatus.PASS)
         return colorize(self.name_predictability, AuditStatus.WARN)
 
+    @property
+    def _render_website_hosting(self):
+        if self.website_hosting:
+            return colorize("Enabled", AuditStatus.WARN)
+        return colorize("Disabled", AuditStatus.PASS)
+
 
 class S3SecurityScanner(BaseScanner[S3SecurityResult]):
     def __init__(self, check_type: str = S3SecurityScanType.ALL):
@@ -369,6 +391,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         version_config = {"Status": "Suspended", "MFADelete": "Disabled"}
         object_lock = "Disabled"
         name_predictability = "HIGH"
+        website_hosting = False
 
         is_all = self.check_type == S3SecurityScanType.ALL
 
@@ -397,6 +420,9 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         if is_all or self.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
             name_predictability = utils.get_bucket_name_predictability(bucket_name)
 
+        if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
+            website_hosting = self.client.get_website_hosting_status(bucket_name)
+
         return S3SecurityResult(
             resource_arn=bucket_arn,
             resource_name=bucket_name,
@@ -413,5 +439,6 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
             mfa_delete=version_config["MFADelete"],
             object_lock=object_lock,
             name_predictability=name_predictability,
+            website_hosting=website_hosting,
             check_type=self.check_type,
         )
