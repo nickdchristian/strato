@@ -29,6 +29,7 @@ class S3SecurityResult(AuditResult):
     resource_arn: str
     resource_name: str
     region: str
+    account_id: str
 
     creation_date: datetime = None
     public_access_blocked: bool = False
@@ -216,6 +217,7 @@ class S3SecurityResult(AuditResult):
     def to_dict(self) -> dict[str, Any]:
         """JSON always includes the full data set."""
         data = {
+            "account_id": self.account_id,
             "resource_arn": self.resource_arn,
             "resource_name": self.resource_name,
             "region": self.region,
@@ -237,7 +239,7 @@ class S3SecurityResult(AuditResult):
         CSV Headers: ALWAYS returns the full set of columns (Base + Dynamic + Risk).
         """
         dummy = cls(resource_arn="", resource_name="", region="", check_type=check_type)
-        base_headers = ["Bucket Name", "Region", "Creation Date"]
+        base_headers = ["Account ID", "Bucket Name", "Region", "Creation Date"]
         dynamic_headers = [col[0] for col in dummy._get_scan_columns()]
         risk_headers = ["Risk Level", "Reasons"]
 
@@ -250,14 +252,21 @@ class S3SecurityResult(AuditResult):
         For specific scans, it returns the full details (same as CSV).
         """
         if check_type == S3SecurityScanType.ALL:
-            return ["Bucket Name", "Region", "Creation Date", "Risk Level", "Reasons"]
+            return [
+                "Account ID",
+                "Bucket Name",
+                "Region",
+                "Creation Date",
+                "Risk Level",
+                "Reasons",
+            ]
 
         return cls.get_csv_headers(check_type)
 
     def get_csv_row(self) -> list[str]:
         """CSV Row: Aligns with get_csv_headers (Always Full)."""
         date_str = self.creation_date.isoformat() if self.creation_date else "Unknown"
-        row = [self.resource_name, self.region, date_str]
+        row = [self.account_id, self.resource_name, self.region, date_str]
 
         # Always inject dynamic columns
         for _, _, val, _ in self._get_scan_columns():
@@ -272,25 +281,24 @@ class S3SecurityResult(AuditResult):
 
     def get_table_row(self) -> list[str]:
         """Table Row: Aligns with get_headers (Summary for ALL, Full for others)."""
-        base_row = super().get_table_row()
 
-        resource_name = base_row[0]
-        region = base_row[1]
-        risk_level = base_row[2]
-        risk_reasons = base_row[3]
+        base_row = super().get_table_row()
+        risk_level_render = base_row[-2]
+        risk_reasons_render = base_row[-1]
 
         date_str = (
             self.creation_date.strftime("%Y-%m-%d") if self.creation_date else "Unknown"
         )
-        row = [resource_name, region, date_str]
+
+        row = [self.account_id, self.resource_name, self.region, date_str]
 
         # Only inject dynamic columns if NOT 'ALL' (Risk-Only View)
         if self.check_type != S3SecurityScanType.ALL:
             for _, _, _, render in self._get_scan_columns():
                 row.append(render)
 
-        row.append(risk_level)
-        row.append(risk_reasons)
+        row.append(risk_level_render)
+        row.append(risk_reasons_render)
 
         return row
 
@@ -365,9 +373,14 @@ class S3SecurityResult(AuditResult):
 
 
 class S3SecurityScanner(BaseScanner[S3SecurityResult]):
-    def __init__(self, check_type: str = S3SecurityScanType.ALL):
-        super().__init__(check_type)
-        self.client = S3Client()
+    def __init__(
+        self,
+        check_type: str = S3SecurityScanType.ALL,
+        session=None,
+        account_id="Unknown",
+    ):
+        super().__init__(check_type, session, account_id)
+        self.client = S3Client(session=self.session)
 
     @property
     def service_name(self) -> str:
@@ -424,6 +437,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
             website_hosting = self.client.get_website_hosting_status(bucket_name)
 
         return S3SecurityResult(
+            account_id=self.account_id,
             resource_arn=bucket_arn,
             resource_name=bucket_name,
             region=region,

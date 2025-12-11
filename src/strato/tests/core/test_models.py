@@ -22,6 +22,7 @@ def test_risk_level_mapping():
 
 def test_row_rendering():
     result = AuditResult(
+        account_id="123456789012",
         resource_arn="arn:aws:test",
         resource_name="test-res",
         region="us-east-1",
@@ -30,10 +31,12 @@ def test_row_rendering():
     )
 
     table_row = result.get_table_row()
+    assert "123456789012" in table_row[0]
     assert "test-res" in table_row
-    assert "[red]CRITICAL[/red]" in table_row[2]
+    assert "[red]CRITICAL[/red]" in table_row[3]
 
     # CSV row should be clean
     csv_row = result.get_csv_row()
-    assert "CRITICAL" in csv_row[2]
-    assert "[red]" not in csv_row[2]
+    assert "123456789012" in csv_row[0]
+    assert "CRITICAL" in csv_row[3]
+    assert "[red]" not in csv_row[3]

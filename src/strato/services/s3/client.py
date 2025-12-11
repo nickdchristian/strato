@@ -15,10 +15,11 @@ class S3Client:
     - Error suppression (returns defaults on missing permissions/configs)
     """
 
-    def __init__(self):
+    def __init__(self, session: boto3.Session = None):
         # Adaptive mode helps with rate limiting during multi-threaded scans
         retry_config = Config(retries={"mode": "adaptive", "max_attempts": 10})
-        self._client = boto3.client("s3", config=retry_config)
+        self.session = session or boto3.Session()
+        self._client = self.session.client("s3", config=retry_config)
 
     def list_buckets(self) -> list[dict]:
         """Lists all buckets in the account using pagination."""

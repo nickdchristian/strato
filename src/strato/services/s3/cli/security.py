@@ -14,16 +14,15 @@ app = typer.Typer(help="S3 Security Audits")
 def security_scan_all(
     verbose: bool = False,
     fail_on_risk: bool = typer.Option(
-        False, "--fail-on-risk", help="Exit code 1 if risks found (for CI/CD)"
+        False, "--fail-on-risk", help="Exit code 1 if risks found"
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output raw JSON (silences spinner)"
-    ),
-    csv_output: bool = typer.Option(
-        False, "--csv", help="Output CSV (silences spinner)"
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
+    csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
     failures_only: bool = typer.Option(
         False, "--failures-only", help="Only display resources with risks"
+    ),
+    org_role: str = typer.Option(
+        None, "--org-role", help="IAM role to assume for multi-account scan"
     ),
 ):
     """Run ALL S3 Security checks."""
@@ -36,6 +35,7 @@ def security_scan_all(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -46,6 +46,7 @@ def encryption_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Encryption configuration."""
     run_scan(
@@ -57,6 +58,7 @@ def encryption_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -67,6 +69,7 @@ def public_access_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Public Access Block configuration."""
     run_scan(
@@ -78,6 +81,7 @@ def public_access_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -88,6 +92,7 @@ def policy_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Bucket Policy compliance (SSL & Public permissions)."""
     run_scan(
@@ -99,6 +104,7 @@ def policy_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -109,6 +115,7 @@ def acl_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Legacy ACL usage and Log Delivery compliance."""
     run_scan(
@@ -120,6 +127,7 @@ def acl_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -130,6 +138,7 @@ def versioning_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Versioning and MFA Delete configuration."""
     run_scan(
@@ -141,6 +150,7 @@ def versioning_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -151,6 +161,7 @@ def object_lock_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Object Lock configuration."""
     run_scan(
@@ -162,6 +173,7 @@ def object_lock_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -172,6 +184,7 @@ def name_predictability_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Predictable Bucket Names (Entropy check)."""
     run_scan(
@@ -183,6 +196,7 @@ def name_predictability_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )
 
 
@@ -193,6 +207,7 @@ def website_scan(
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
     failures_only: bool = typer.Option(False, "--failures-only"),
+    org_role: str = typer.Option(None, "--org-role"),
 ):
     """Scan for Static Website Hosting configuration."""
     run_scan(
@@ -204,4 +219,5 @@ def website_scan(
         json_output,
         csv_output,
         failures_only,
+        org_role,
     )

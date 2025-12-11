@@ -14,6 +14,7 @@ class AuditResult:
     resource_arn: str
     resource_name: str
     region: str
+    account_id: str = "Unknown"
     risk_score: int = 0
     risk_reasons: list[str] = field(default_factory=list)
 
@@ -42,7 +43,7 @@ class AuditResult:
     @classmethod
     def get_headers(cls, check_type: str = "ALL") -> list[str]:
         """Returns column headers for Table and CSV output."""
-        return ["Resource", "Region", "Risk Level", "Reasons"]
+        return ["Account ID", "Resource", "Region", "Risk Level", "Reasons"]
 
     def get_table_row(self) -> list[str]:
         """
@@ -51,7 +52,7 @@ class AuditResult:
         """
         risk_color_map = {
             "CRITICAL": "red",
-            "HIGH": "orange",
+            "HIGH": "orange1",
             "MEDIUM": "yellow",
             "LOW": "blue",
             "SAFE": "green",
@@ -61,7 +62,13 @@ class AuditResult:
         risk_level_render = f"[{color}]{self.risk_level}[/{color}]"
         risk_reasons_render = ", ".join(self.risk_reasons) if self.risk_reasons else "-"
 
-        return [self.resource_name, self.region, risk_level_render, risk_reasons_render]
+        return [
+            self.account_id,
+            self.resource_name,
+            self.region,
+            risk_level_render,
+            risk_reasons_render,
+        ]
 
     def get_csv_row(self) -> list[str]:
         """
@@ -69,4 +76,10 @@ class AuditResult:
         Color tags are stripped/omitted.
         """
         risk_reasons_render = "; ".join(self.risk_reasons)
-        return [self.resource_name, self.region, self.risk_level, risk_reasons_render]
+        return [
+            self.account_id,
+            self.resource_name,
+            self.region,
+            self.risk_level,
+            risk_reasons_render,
+        ]
