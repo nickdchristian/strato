@@ -50,7 +50,7 @@ def test_scanner_analyze_resource(mock_client_cls):
     assert result.resource_name == "risk-bucket-a1b2c3d4"
     assert result.account_id == "123456789012"
     assert result.encryption == "AES256"
-    assert result.sse_c_blocked is True
+    assert result.sse_c is True
 
     assert result.risk_level == "CRITICAL"
     assert len(result.risk_reasons) == 1

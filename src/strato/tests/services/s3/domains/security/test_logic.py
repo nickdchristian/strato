@@ -14,11 +14,11 @@ def safe_result():
         resource_name="safe-bucket-3a9f1c4d",
         region="us-east-1",
         creation_date=datetime(2023, 1, 1),
-        public_access_blocked=True,
+        public_access_block_status=True,
         policy_access="Private",
         ssl_enforced=True,
         encryption="AES256",
-        sse_c_blocked=True,
+        sse_c=True,
         acl_status="Disabled",
         versioning="Enabled",
         mfa_delete="Enabled",
@@ -35,7 +35,7 @@ def risky_result():
         resource_name="risky-bucket-7b8e9f0a",
         region="us-east-1",
         creation_date=datetime(2023, 1, 1),
-        public_access_blocked=False,
+        public_access_block_status=False,
         encryption="None",
         acl_status="Enabled",
         versioning="Suspended",
@@ -66,7 +66,7 @@ def test_risk_scoring_all_safe(safe_result):
 
 
 def test_risk_scoring_critical(safe_result):
-    safe_result.public_access_blocked = False
+    safe_result.public_access_block_status = False
     safe_result._evaluate_risk()
 
     assert safe_result.risk_score >= RiskWeight.CRITICAL
@@ -75,7 +75,7 @@ def test_risk_scoring_critical(safe_result):
 
 def test_risk_scoring_medium(safe_result):
     safe_result.encryption = "None"
-    safe_result.sse_c_blocked = True
+    safe_result.sse_c = True
     safe_result._evaluate_risk()
 
     assert safe_result.risk_score == RiskWeight.MEDIUM
@@ -83,7 +83,7 @@ def test_risk_scoring_medium(safe_result):
 
 
 def test_risk_scoring_ssec_warning(safe_result):
-    safe_result.sse_c_blocked = False
+    safe_result.sse_c = False
     safe_result._evaluate_risk()
 
     assert safe_result.risk_score == RiskWeight.LOW
@@ -91,10 +91,10 @@ def test_risk_scoring_ssec_warning(safe_result):
 
 
 def test_risk_scoring_filtering(safe_result):
-    safe_result.public_access_blocked = False
+    safe_result.public_access_block_status = False
     safe_result.check_type = S3SecurityScanType.ENCRYPTION
     safe_result.encryption = "AES256"
-    safe_result.sse_c_blocked = True
+    safe_result.sse_c = True
     safe_result._evaluate_risk()
 
     assert safe_result.risk_score == RiskWeight.NONE
@@ -141,7 +141,7 @@ def test_all_scan_csv_is_full_detail(safe_result):
     assert len(headers) == len(row)
     assert "Account ID" in headers
     assert "Encryption" in headers
-    assert "SSE-C Blocked" in headers
+    assert "SSE-C" in headers
     assert "Object Lock" in headers
     assert "MFA Delete" in headers
 
@@ -185,7 +185,7 @@ def test_json_filtering(safe_result):
     assert "risk_score" in data
     assert "object_lock" in data
     assert "encryption" not in data
-    assert "public_access_blocked" not in data
+    assert "public_access_block_status" not in data
     assert "versioning" not in data
 
 
