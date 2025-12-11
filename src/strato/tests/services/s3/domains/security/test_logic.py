@@ -9,6 +9,7 @@ from strato.services.s3.domains.security import S3SecurityResult, S3SecurityScan
 @pytest.fixture
 def safe_result():
     return S3SecurityResult(
+        account_id="111122223333",
         resource_arn="arn:aws:s3:::safe-bucket-3a9f1c4d",
         resource_name="safe-bucket-3a9f1c4d",
         region="us-east-1",
@@ -29,6 +30,7 @@ def safe_result():
 @pytest.fixture
 def risky_result():
     return S3SecurityResult(
+        account_id="111122223333",
         resource_arn="arn:aws:s3:::risky-bucket-7b8e9f0a",
         resource_name="risky-bucket-7b8e9f0a",
         region="us-east-1",
@@ -46,6 +48,7 @@ def risky_result():
 @pytest.fixture
 def policy_result():
     return S3SecurityResult(
+        account_id="111122223333",
         resource_arn="arn:aws:s3:::policy-bucket-1a2b3c4d",
         resource_name="policy-bucket-1a2b3c4d",
         region="us-east-1",
@@ -100,7 +103,8 @@ def test_risk_scoring_filtering(safe_result):
 def test_render_style_integration(safe_result):
     safe_result.check_type = S3SecurityScanType.ENCRYPTION
     row = safe_result.get_table_row()
-    enc_render = row[3]
+    # [Account, Name, Region, Date, Enc, SSE, Level, Reasons]
+    enc_render = row[4]
 
     assert "[green]AES256[/green]" in enc_render
 
@@ -108,7 +112,8 @@ def test_render_style_integration(safe_result):
 def test_render_style_risky(risky_result):
     risky_result.check_type = S3SecurityScanType.PUBLIC_ACCESS
     row = risky_result.get_table_row()
-    pub_render = row[3]
+    # [Account, Name, Region, Date, PublicBlock, Level, Reasons]
+    pub_render = row[4]
 
     assert "[red]OPEN[/red]" in pub_render
 
@@ -118,8 +123,10 @@ def test_all_scan_table_is_summary(safe_result):
     headers = safe_result.get_headers(S3SecurityScanType.ALL)
     row = safe_result.get_table_row()
 
-    assert len(headers) == 5
-    assert len(row) == 5
+    # Headers: Account ID, Bucket Name, Region, Creation Date, Risk Level, Reasons
+    assert len(headers) == 6
+    assert len(row) == 6
+    assert "Account ID" in headers
     assert "Encryption" not in headers
     assert "Object Lock" not in headers
 
@@ -129,9 +136,10 @@ def test_all_scan_csv_is_full_detail(safe_result):
     headers = safe_result.get_csv_headers(S3SecurityScanType.ALL)
     row = safe_result.get_csv_row()
 
-    assert len(headers) > 5
-    assert len(row) > 5
+    assert len(headers) > 6
+    assert len(row) > 6
     assert len(headers) == len(row)
+    assert "Account ID" in headers
     assert "Encryption" in headers
     assert "SSE-C Blocked" in headers
     assert "Object Lock" in headers
@@ -147,7 +155,8 @@ def test_specific_scan_headers_match(safe_result):
 
     assert table_headers == csv_headers
     assert "Object Lock" in table_headers
-    assert len(table_headers) == 6
+    # Base (4) + Dyn (1) + Risk (2) = 7
+    assert len(table_headers) == 7
 
 
 def test_csv_row_alignment(safe_result):
@@ -170,6 +179,8 @@ def test_json_filtering(safe_result):
     safe_result.check_type = S3SecurityScanType.OBJECT_LOCK
     data = safe_result.to_dict()
 
+    assert "account_id" in data
+    assert data["account_id"] == "111122223333"
     assert "resource_name" in data
     assert "risk_score" in data
     assert "object_lock" in data
@@ -222,8 +233,9 @@ def test_policy_scoring_cumulative(policy_result):
 
 def test_policy_render_style_safe(policy_result):
     row = policy_result.get_table_row()
-    access_render = row[3]
-    ssl_render = row[4]
+    # [Account, Name, Region, Date, Access, SSL, Level, Reasons]
+    access_render = row[4]
+    ssl_render = row[5]
 
     assert "Private" in access_render
     assert "green" in access_render
@@ -236,23 +248,24 @@ def test_policy_render_style_risky(policy_result):
     policy_result.ssl_enforced = False
     row = policy_result.get_table_row()
 
-    assert "Public" in row[3]
-    assert "red" in row[3]
-    assert "No" in row[4]
+    assert "Public" in row[4]
     assert "red" in row[4]
+    assert "No" in row[5]
+    assert "red" in row[5]
 
 
 def test_policy_render_style_warning(policy_result):
     policy_result.policy_access = "Potentially Public"
     row = policy_result.get_table_row()
 
-    assert "Potentially Public" in row[3]
-    assert "yellow" in row[3]
+    assert "Potentially Public" in row[4]
+    assert "yellow" in row[4]
 
 
 def test_policy_scan_csv_headers(policy_result):
     headers = policy_result.get_csv_headers(S3SecurityScanType.POLICY)
 
+    assert "Account ID" in headers
     assert "Policy Access" in headers
     assert "SSL Enforced" in headers
     assert "Encryption" not in headers
@@ -271,6 +284,7 @@ def test_policy_json_structure(policy_result):
 @pytest.fixture
 def website_result():
     return S3SecurityResult(
+        account_id="111122223333",
         resource_arn="arn:aws:s3:::website-bucket-123",
         resource_name="website-bucket-123",
         region="us-east-1",
@@ -299,7 +313,7 @@ def test_website_scoring_risky(website_result):
 def test_website_render_style_safe(website_result):
     website_result.website_hosting = False
     row = website_result.get_table_row()
-    render = row[3]
+    render = row[4]
 
     assert "Disabled" in str(render)
     assert "green" in str(render)
@@ -308,7 +322,7 @@ def test_website_render_style_safe(website_result):
 def test_website_render_style_risky(website_result):
     website_result.website_hosting = True
     row = website_result.get_table_row()
-    render = row[3]
+    render = row[4]
 
     assert "Enabled" in str(render)
     assert "yellow" in str(render)
@@ -317,6 +331,7 @@ def test_website_render_style_risky(website_result):
 def test_website_csv_headers(website_result):
     headers = website_result.get_csv_headers(S3SecurityScanType.WEBSITE_HOSTING)
 
+    assert "Account ID" in headers
     assert "Website Hosting" in headers
     assert "Encryption" not in headers
     assert "Object Lock" not in headers

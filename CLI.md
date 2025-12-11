@@ -75,10 +75,11 @@ $ sto s3 security all [OPTIONS]
 **Options**:
 
 * `--verbose / --no-verbose`: [default: no-verbose]
-* `--fail-on-risk`: Exit code 1 if risks found (for CI/CD)
-* `--json`: Output raw JSON (silences spinner)
-* `--csv`: Output CSV (silences spinner)
+* `--fail-on-risk`: Exit code 1 if risks found
+* `--json`: Output raw JSON
+* `--csv`: Output CSV
 * `--failures-only`: Only display resources with risks
+* `--org-role TEXT`: IAM role to assume for multi-account scan
 * `--help`: Show this message and exit.
 
 #### `sto s3 security encryption`
@@ -98,6 +99,7 @@ $ sto s3 security encryption [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security public-access`
@@ -117,6 +119,7 @@ $ sto s3 security public-access [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security policy`
@@ -136,6 +139,7 @@ $ sto s3 security policy [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security acls`
@@ -155,6 +159,7 @@ $ sto s3 security acls [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security versioning`
@@ -174,6 +179,7 @@ $ sto s3 security versioning [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security object-lock`
@@ -193,6 +199,7 @@ $ sto s3 security object-lock [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security naming`
@@ -212,6 +219,7 @@ $ sto s3 security naming [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
 
 #### `sto s3 security website`
@@ -231,4 +239,5 @@ $ sto s3 security website [OPTIONS]
 * `--json`
 * `--csv`
 * `--failures-only`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.

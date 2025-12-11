@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
+import boto3
 from rich.console import Console
 
 from strato.core.models import AuditResult
@@ -14,8 +15,15 @@ console = Console(stderr=True)
 class BaseScanner[AuditResultType: AuditResult](ABC):
     """Abstract base class for all resource scanners."""
 
-    def __init__(self, check_type: str = "ALL"):
+    def __init__(
+        self,
+        check_type: str = "ALL",
+        session: boto3.Session = None,
+        account_id: str = "Unknown",
+    ):
         self.check_type = check_type
+        self.session = session or boto3.Session()
+        self.account_id = account_id
 
     @property
     @abstractmethod

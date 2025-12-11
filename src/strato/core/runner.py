@@ -1,6 +1,8 @@
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from rich.console import Console
 
@@ -12,11 +14,77 @@ console = Console()
 
 
 def setup_logging(verbose: bool):
-    """Configures global logging. Default is WARNING to keep CLI output clean."""
-    log_level = logging.DEBUG if verbose else logging.WARNING
+    """
+    Configures logging.
+    In verbose mode, we still log to stderr for debugging.
+    In normal mode, we keep it quiet to allow the Console to control output.
+    """
+    log_level = logging.DEBUG if verbose else logging.ERROR
     logging.basicConfig(
         level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+
+
+def get_org_accounts() -> list[dict]:
+    """Fetches all ACTIVE accounts from AWS Organizations."""
+    org_client = boto3.client("organizations")
+    accounts = []
+    paginator = org_client.get_paginator("list_accounts")
+
+    try:
+        for page in paginator.paginate():
+            for acc in page["Accounts"]:
+                if acc["Status"] == "ACTIVE":
+                    accounts.append({"Id": acc["Id"], "Name": acc["Name"]})
+    except ClientError as e:
+        console.print(f"[bold red]Error listing accounts:[/bold red] {e}")
+        sys.exit(1)
+
+    return accounts
+
+
+def assume_role_session(account_id: str, role_name: str) -> boto3.Session | None:
+    """Assumes a role in the target account and returns a Session."""
+    sts_client = boto3.client("sts")
+    role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
+
+    try:
+        response = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName="StratoAuditSession"
+        )
+        creds = response["Credentials"]
+        return boto3.Session(
+            aws_access_key_id=creds["AccessKeyId"],
+            aws_secret_access_key=creds["SecretAccessKey"],
+            aws_session_token=creds["SessionToken"],
+        )
+    except ClientError:
+        return None
+
+
+def scan_single_account(
+    account: dict, role_name: str, scanner_cls: type[BaseScanner], check_type: str
+) -> tuple[list[AuditResult], str | None]:
+    """
+    Worker function.
+    Returns: (List of Results, Error Message if failed)
+    """
+    account_id = account["Id"]
+    account_name = account["Name"]
+    target_session = assume_role_session(account_id, role_name)
+
+    if not target_session:
+        # Return the error cleanly instead of logging it immediately
+        return [], f"Access Denied: {account_id} ({account_name})"
+
+    scanner = scanner_cls(
+        check_type=check_type, session=target_session, account_id=account_id
+    )
+
+    try:
+        return scanner.scan(silent=True), None
+    except Exception as e:
+        return [], f"Scan Error: {account_id} - {str(e)}"
 
 
 def run_scan(
@@ -28,52 +96,75 @@ def run_scan(
     json_output: bool,
     csv_output: bool,
     failures_only: bool,
+    org_role: str = None,
 ):
-    """
-    Universal Runner Entrypoint.
-
-    Orchestrates the lifecycle of a scan:
-    1. Setup Logging
-    2. Instantiate Scanner
-    3. Execute Scan (handling AWS Auth errors)
-    4. Filter Results
-    5. Present Data (JSON/CSV/Table)
-    6. Handle Exit Codes
-    """
     setup_logging(verbose)
-    scanner = scanner_cls(check_type=check_type)
+    all_results = []
+    skipped_accounts = []
 
-    try:
-        # Silent mode is enabled for structured output (JSON/CSV) so the
-        # loading spinner doesn't corrupt the output stream.
-        results = scanner.scan(silent=(json_output or csv_output))
-    except NoCredentialsError:
+    if org_role:
+        accounts = get_org_accounts()
         console.print(
-            "[bold red]Error:[/bold red] No AWS credentials found."
-            " Please configure your environment."
+            f"[bold blue]Scanning {len(accounts)} accounts "
+            f"with role '{org_role}'...[/bold blue]"
         )
-        sys.exit(1)
-    except ClientError as e:
-        error_code = e.response.get("Error", {}).get("Code", "Unknown")
-        # Handle common auth issues specifically for better UX
-        if error_code in [
-            "InvalidClientTokenId",
-            "SignatureDoesNotMatch",
-            "AuthFailure",
-            "ExpiredToken",
-        ]:
+
+        with console.status(
+            "[bold yellow]Running Multi-Account Scan...", spinner="dots"
+        ):
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {
+                    executor.submit(
+                        scan_single_account, acc, org_role, scanner_cls, check_type
+                    ): acc
+                    for acc in accounts
+                }
+
+                for future in as_completed(futures):
+                    # Unpack the tuple: results + optional error
+                    results, error = future.result()
+                    if error:
+                        skipped_accounts.append(error)
+                    else:
+                        all_results.extend(results)
+
+        if skipped_accounts:
             console.print(
-                "[bold red]Error:[/bold red] Invalid AWS credentials. "
-                "Please check your keys/token."
+                f"\n[bold yellow]Skipped "
+                f"{len(skipped_accounts)} accounts:[/bold yellow]"
             )
-        else:
-            console.print(f"[bold red]Error:[/bold red] AWS API failed: {error_code}")
-        sys.exit(1)
+            for skip_msg in skipped_accounts:
+                console.print(f"  • {skip_msg}", style="yellow")
+            console.print("")  # Add a spacer line
+
+    else:
+        # Single Account execution
+        sts = boto3.client("sts")
+        try:
+            current_account = sts.get_caller_identity()["Account"]
+        except (ClientError, NoCredentialsError):
+            current_account = "Unknown"
+
+        scanner = scanner_cls(check_type=check_type, account_id=current_account)
+
+        try:
+            all_results = scanner.scan(silent=(json_output or csv_output))
+        except NoCredentialsError:
+            console.print(
+                "[bold red]Error:[/bold red] No AWS credentials found. "
+                "Please configure your environment."
+            )
+            sys.exit(1)
+        except ClientError as e:
+            console.print(f"[bold red]Error:[/bold red] AWS API failed: {e}")
+            sys.exit(1)
 
     if failures_only:
-        results = [result for result in results if result.has_risk]
+        all_results = [result for result in all_results if result.has_risk]
 
-    presenter = AuditPresenter(results, result_type=result_cls, check_type=check_type)
+    presenter = AuditPresenter(
+        all_results, result_type=result_cls, check_type=check_type
+    )
 
     if json_output:
         presenter.print_json()
@@ -81,7 +172,10 @@ def run_scan(
         presenter.print_csv()
     else:
         title_suffix = " [Failures Only]" if failures_only else ""
-        presenter.print_table(title=f"{scanner.service_name}{title_suffix}")
+        title_prefix = "Organization " if org_role else ""
+        presenter.print_table(
+            title=f"{title_prefix}{scanner_cls(check_type).service_name}{title_suffix}"
+        )
 
-    if fail_on_risk and any(result.has_risk for result in results):
+    if fail_on_risk and any(result.has_risk for result in all_results):
         sys.exit(1)
