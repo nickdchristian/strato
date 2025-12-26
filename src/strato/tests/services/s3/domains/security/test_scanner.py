@@ -7,8 +7,6 @@ from strato.services.s3.domains.security import (
 )
 
 
-
-
 @patch("strato.services.s3.domains.security.S3Client")
 def test_scanner_analyze_resource(mock_client_cls):
     """

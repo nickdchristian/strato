@@ -92,7 +92,7 @@ def test_observation_level_ssec_warning(safe_result):
     assert "SSE-C Not Blocked" in safe_result.findings
 
 
-def test_observation_level_mfa_object_lock_ignored_for_standard_buckets(observation_result):
+def test_ignore_mfa_lock_on_standard_buckets(observation_result):
     # Renamed fixture argument from 'risky_result' to 'observation_result'
     observation_result.public_access_block_status = True
     observation_result.encryption = "AES256"
@@ -260,9 +260,7 @@ def test_policy_scoring_high_potentially_public(policy_result):
     policy_result._evaluate_status()
 
     assert policy_result.status_score == ObservationLevel.HIGH
-    assert (
-        "Bucket Policy Potentially Allows Public Access" in policy_result.findings
-    )
+    assert "Bucket Policy Potentially Allows Public Access" in policy_result.findings
 
 
 def test_policy_scoring_medium_no_ssl(policy_result):
