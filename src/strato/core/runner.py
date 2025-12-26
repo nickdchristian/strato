@@ -92,7 +92,7 @@ def run_scan(
     result_cls: type[AuditResult],
     check_type: str,
     verbose: bool,
-    fail_on_risk: bool,
+    fail_on_finding: bool,
     json_output: bool,
     csv_output: bool,
     failures_only: bool,
@@ -121,7 +121,6 @@ def run_scan(
                 }
 
                 for future in as_completed(futures):
-                    # Unpack the tuple: results + optional error
                     results, error = future.result()
                     if error:
                         skipped_accounts.append(error)
@@ -160,7 +159,7 @@ def run_scan(
             sys.exit(1)
 
     if failures_only:
-        all_results = [result for result in all_results if result.has_risk]
+        all_results = [result for result in all_results if result.is_violation]
 
     presenter = AuditPresenter(
         all_results, result_type=result_cls, check_type=check_type
@@ -180,5 +179,5 @@ def run_scan(
         else:
             console.print("[bold blue]No Results Found[/bold blue]")
 
-    if fail_on_risk and any(result.has_risk for result in all_results):
+    if fail_on_finding and any(result.is_violation for result in all_results):
         sys.exit(1)

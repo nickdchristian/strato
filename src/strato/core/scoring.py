@@ -1,27 +1,25 @@
 from enum import IntEnum
 
 
-class RiskWeight(IntEnum):
+class ObservationLevel(IntEnum):
     """
-    Standardized Risk Weights for scoring audit results.
-
-    The score is loosely calculated based on: Impact (1-10) * Likelihood (1-10).
+    Standardized Levels for audit results.
     """
 
     # Impact: Catastrophic (Data Breach, Full Compromise)
-    # Likelihood: High (Publicly accessible, Default credentials)
     CRITICAL = 100
 
     # Impact: High (Privileged access, Unencrypted sensitive data)
-    # Likelihood: Medium (Requires internal network access or specific conditions)
     HIGH = 50
 
     # Impact: Medium (Configuration drift, Non-compliant settings)
-    # Likelihood: Medium (Requires chained exploits)
     MEDIUM = 20
 
-    # Impact: Low (Hygiene, Tagging, Informational)
-    # Likelihood: Low or N/A
+    # Impact: Low (Hygiene, Tagging)
     LOW = 5
 
-    NONE = 0
+    # Neutral: Purely informational (Inventory data)
+    INFO = 1
+
+    # Compliant: Explicitly passed a check
+    PASS = 0

@@ -9,8 +9,8 @@ from strato.core.presenter import AuditPresenter
 @pytest.fixture
 def sample_results():
     return [
-        AuditResult("arn1", "res1", "us-east-1", account_id="111", risk_score=0),
-        AuditResult("arn2", "res2", "us-east-1", account_id="222", risk_score=100),
+        AuditResult("arn1", "res1", "us-east-1", account_id="111", status_score=0),
+        AuditResult("arn2", "res2", "us-east-1", account_id="222", status_score=100),
     ]
 
 
@@ -22,7 +22,6 @@ def test_print_json(sample_results):
         assert mock_console.print_json.called
         data = mock_console.print_json.call_args[1]["data"]
         assert len(data) == 2
-        # Verify Account ID is present in JSON dump
         assert data[0]["account_id"] == "111"
 
 
@@ -33,17 +32,16 @@ def test_print_csv(sample_results, capsys):
     captured = capsys.readouterr()
     output = captured.out
 
-    # Update expectation for CSV header
-    assert "Account ID,Resource,Region,Risk Level,Reasons" in output
-    assert "111,res1,us-east-1,SAFE" in output
+    assert "Account ID,Resource,Region,Status,Findings" in output
+    assert "111,res1,us-east-1,PASS" in output
 
 
-def test_summary_counts_total_risks():
-    result_1 = AuditResult("arn:1", "resource-1", "us-east-1")
-    result_1.risk_reasons = ["Risk Type A", "Risk Type B"]
+def test_summary_counts_total_observations():
+    result_1 = AuditResult("arn:1", "resource-1", "us-east-1", status_score=100)
+    result_1.findings = ["Finding Type A", "Finding Type B"]
 
-    result_2 = AuditResult("arn:2", "resource-2", "us-east-1")
-    result_2.risk_reasons = ["Risk Type C"]
+    result_2 = AuditResult("arn:2", "resource-2", "us-east-1", status_score=100)
+    result_2.findings = ["Finding Type C"]
 
     results = [result_1, result_2]
 
@@ -52,7 +50,7 @@ def test_summary_counts_total_risks():
 
         presenter._print_summary()
 
-        expected_msg = "Found 3 risks"
+        expected_msg = "Found 3 violations"
 
         printed_text = " ".join(
             call.args[0] for call in mock_console.print.call_args_list

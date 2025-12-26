@@ -1,40 +1,46 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from strato.core.scoring import RiskWeight
+from strato.core.scoring import ObservationLevel  #
 
 
 @dataclass
 class AuditResult:
     """
     Base data structure for any resource audit.
-    Specific domains (e.g., S3, EC2) should inherit from this.
     """
 
     resource_arn: str
     resource_name: str
     region: str
     account_id: str = "Unknown"
-    risk_score: int = 0
-    risk_reasons: list[str] = field(default_factory=list)
+
+    status_score: int = 0
+
+    findings: list[str] = field(default_factory=list)
 
     @property
-    def has_risk(self) -> bool:
-        """Returns True if the resource violates any checks."""
-        return self.risk_score > 0
+    def is_violation(self) -> bool:
+        """
+        Returns True if the resource has a negative finding (Low to Critical).
+        """
+        return self.status_score >= ObservationLevel.LOW
 
     @property
-    def risk_level(self) -> str:
-        """Maps the numeric risk score to a human-readable severity string."""
-        if self.risk_score >= RiskWeight.CRITICAL:
+    def status(self) -> str:
+        """Maps the numeric score to a human-readable status string."""
+        if self.status_score >= ObservationLevel.CRITICAL:
             return "CRITICAL"
-        if self.risk_score >= RiskWeight.HIGH:
+        if self.status_score >= ObservationLevel.HIGH:
             return "HIGH"
-        if self.risk_score >= RiskWeight.MEDIUM:
+        if self.status_score >= ObservationLevel.MEDIUM:
             return "MEDIUM"
-        if self.risk_score >= RiskWeight.LOW:
+        if self.status_score >= ObservationLevel.LOW:
             return "LOW"
-        return "SAFE"
+        if self.status_score == ObservationLevel.INFO:
+            return "INFO"
+
+        return "PASS"
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes the object for JSON output."""
@@ -42,44 +48,40 @@ class AuditResult:
 
     @classmethod
     def get_headers(cls, check_type: str = "ALL") -> list[str]:
-        """Returns column headers for Table and CSV output."""
-        return ["Account ID", "Resource", "Region", "Risk Level", "Reasons"]
+        # Updated header names
+        return ["Account ID", "Resource", "Region", "Status", "Findings"]
 
     def get_table_row(self) -> list[str]:
         """
         Returns a list of strings formatted for the Rich Table library.
-        Includes color tags (e.g., [red]CRITICAL[/red]).
         """
-        risk_color_map = {
+        status_color_map = {
             "CRITICAL": "red",
             "HIGH": "orange1",
             "MEDIUM": "yellow",
             "LOW": "blue",
-            "SAFE": "green",
+            "INFO": "dim white",
+            "PASS": "green",
         }
-        color = risk_color_map.get(self.risk_level, "white")
+        color = status_color_map.get(self.status, "white")
 
-        risk_level_render = f"[{color}]{self.risk_level}[/{color}]"
-        risk_reasons_render = ", ".join(self.risk_reasons) if self.risk_reasons else "-"
+        status_render = f"[{color}]{self.status}[/{color}]"
+        findings_render = ", ".join(self.findings) if self.findings else "-"
 
         return [
             self.account_id,
             self.resource_name,
             self.region,
-            risk_level_render,
-            risk_reasons_render,
+            status_render,
+            findings_render,
         ]
 
     def get_csv_row(self) -> list[str]:
-        """
-        Returns a raw list of strings for CSV output.
-        Color tags are stripped/omitted.
-        """
-        risk_reasons_render = "; ".join(self.risk_reasons)
+        findings_render = "; ".join(self.findings)
         return [
             self.account_id,
             self.resource_name,
             self.region,
-            self.risk_level,
-            risk_reasons_render,
+            self.status,
+            findings_render,
         ]

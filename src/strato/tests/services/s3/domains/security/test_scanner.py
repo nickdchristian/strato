@@ -7,11 +7,13 @@ from strato.services.s3.domains.security import (
 )
 
 
+
+
 @patch("strato.services.s3.domains.security.S3Client")
 def test_scanner_analyze_resource(mock_client_cls):
     """
     Verifies that the scanner correctly maps raw AWS data to an S3SecurityResult,
-    including the account_id and risk scoring.
+    including the account_id and observation scoring.
     """
     mock_client = mock_client_cls.return_value
 
@@ -53,9 +55,9 @@ def test_scanner_analyze_resource(mock_client_cls):
     assert result.encryption == "AES256"
     assert result.sse_c is True
 
-    assert result.risk_level == "CRITICAL"
-    assert len(result.risk_reasons) == 1
-    assert "Public Access Allowed" in result.risk_reasons
+    assert result.status == "CRITICAL"
+    assert len(result.findings) == 1
+    assert "Public Access Allowed" in result.findings
 
 
 @patch("strato.services.s3.domains.security.S3Client")
@@ -97,7 +99,7 @@ def test_scanner_handles_access_denied(mock_client_cls):
     assert result.account_id == "999888777"
 
     assert result.encryption == "None"
-    assert "Encryption Missing" in result.risk_reasons
+    assert "Encryption Missing" in result.findings
 
 
 @patch("strato.services.s3.domains.security.S3Client")
@@ -118,7 +120,7 @@ def test_scanner_session_injection(mock_client_cls):
 def test_scanner_detects_log_bucket(mock_client_cls):
     """
     Verifies that if the client detects log sources, they are passed to the result
-    and risk logic flags missing protections.
+    and observation logic flags missing protections.
     """
     mock_client = mock_client_cls.return_value
     mock_client.get_public_access_status.return_value = True
@@ -128,7 +130,6 @@ def test_scanner_detects_log_bucket(mock_client_cls):
     }
     mock_client.get_acl_status.return_value = "Disabled"
 
-    # FIX: Status must be Enabled to fall through to MFA check
     mock_client.get_versioning_status.return_value = {
         "Status": "Enabled",
         "MFADelete": "Disabled",
@@ -149,6 +150,7 @@ def test_scanner_detects_log_bucket(mock_client_cls):
     )
 
     assert result.log_sources == ["cloudtrail.amazonaws.com"]
-    risk_strings = " ".join(result.risk_reasons)
-    assert "MFA Delete Disabled" in risk_strings
-    assert "Object Lock Disabled" in risk_strings
+
+    observation_strings = " ".join(result.findings)
+    assert "MFA Delete Disabled" in observation_strings
+    assert "Object Lock Disabled" in observation_strings

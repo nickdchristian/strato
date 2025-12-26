@@ -6,7 +6,7 @@ from typing import Any
 
 from strato.core.models import AuditResult
 from strato.core.scanner import BaseScanner
-from strato.core.scoring import RiskWeight
+from strato.core.scoring import ObservationLevel
 from strato.core.style import AuditStatus, colorize
 from strato.services.s3 import utils
 from strato.services.s3.client import S3Client
@@ -48,82 +48,84 @@ class S3SecurityResult(AuditResult):
     check_type: str = S3SecurityScanType.ALL
 
     def __post_init__(self):
-        self._evaluate_risk()
+        self._evaluate_status()
 
-    def _evaluate_risk(self):
-        self.risk_score = 0
-        self.risk_reasons = []
+    def _evaluate_status(self):
+        """
+        Evaluates the resource configuration against opinionated rules
+        to determine the ObservationLevel.
+        """
+        self.status_score = 0
+        self.findings = []
 
         is_all = self.check_type == S3SecurityScanType.ALL
         is_critical_log_bucket = len(self.log_sources) > 0
 
         if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
             if not self.public_access_block_status:
-                self.risk_score += RiskWeight.CRITICAL
-                self.risk_reasons.append("Public Access Allowed")
+                self.status_score += ObservationLevel.CRITICAL
+                self.findings.append("Public Access Allowed")
 
         if is_all or self.check_type == S3SecurityScanType.POLICY:
             if not self.ssl_enforced:
-                self.risk_score += RiskWeight.MEDIUM
-                self.risk_reasons.append("SSL Not Enforced")
+                self.status_score += ObservationLevel.MEDIUM
+                self.findings.append("SSL Not Enforced")
             if self.policy_access == "Public":
-                self.risk_score += RiskWeight.CRITICAL
-                self.risk_reasons.append("Bucket Policy Allows Public Access")
+                self.status_score += ObservationLevel.CRITICAL
+                self.findings.append("Bucket Policy Allows Public Access")
             if self.policy_access == "Potentially Public":
-                self.risk_score += RiskWeight.HIGH
-                self.risk_reasons.append(
-                    "Bucket Policy Potentially Allows Public Access"
-                )
+                self.status_score += ObservationLevel.HIGH
+                self.findings.append("Bucket Policy Potentially Allows Public Access")
 
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
             if self.encryption == "None":
-                self.risk_score += RiskWeight.MEDIUM
-                self.risk_reasons.append("Encryption Missing")
+                self.status_score += ObservationLevel.MEDIUM
+                self.findings.append("Encryption Missing")
 
             if not self.sse_c:
-                self.risk_score += RiskWeight.LOW
-                self.risk_reasons.append("SSE-C Not Blocked")
+                self.status_score += ObservationLevel.LOW
+                self.findings.append("SSE-C Not Blocked")
 
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             if self.acl_status == "Enabled":
                 if self.log_target:
-                    self.risk_score += RiskWeight.MEDIUM
-                    self.risk_reasons.append("Legacy ACLs (Required for Logging)")
+                    self.status_score += ObservationLevel.MEDIUM
+                    self.findings.append("Legacy ACLs (Required for Logging)")
                 else:
-                    self.risk_score += RiskWeight.HIGH
-                    self.risk_reasons.append("Legacy ACLs Enabled")
+                    self.status_score += ObservationLevel.HIGH
+                    self.findings.append("Legacy ACLs Enabled")
 
         if is_all or self.check_type == S3SecurityScanType.VERSIONING:
             if self.versioning != "Enabled":
-                self.risk_score += RiskWeight.MEDIUM
-                self.risk_reasons.append("Versioning Disabled")
+                self.status_score += ObservationLevel.MEDIUM
+                self.findings.append("Versioning Disabled")
             elif self.mfa_delete != "Enabled" and is_critical_log_bucket:
-                self.risk_score += RiskWeight.LOW
+                self.status_score += ObservationLevel.LOW
                 formatted_sources = ", ".join(self.log_sources)
-                self.risk_reasons.append(
+                self.findings.append(
                     f"MFA Delete Disabled ({formatted_sources} Bucket)"
                 )
 
         if is_all or self.check_type == S3SecurityScanType.OBJECT_LOCK:
             if self.object_lock != "Enabled" and is_critical_log_bucket:
-                self.risk_score += RiskWeight.LOW
+                self.status_score += ObservationLevel.LOW
                 formatted_sources = ", ".join(self.log_sources)
-                self.risk_reasons.append(
+                self.findings.append(
                     f"Object Lock Disabled ({formatted_sources} Bucket)"
                 )
 
         if is_all or self.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
             if self.name_predictability == "HIGH":
-                self.risk_score += RiskWeight.LOW
-                self.risk_reasons.append("Highly Predictable Bucket Name")
+                self.status_score += ObservationLevel.LOW
+                self.findings.append("Highly Predictable Bucket Name")
             if self.name_predictability == "MODERATE":
-                self.risk_score += RiskWeight.NONE
-                self.risk_reasons.append("Moderately Predictable Bucket Name")
+                self.status_score += ObservationLevel.INFO
+                self.findings.append("Moderately Predictable Bucket Name")
 
         if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
             if self.website_hosting:
-                self.risk_score += RiskWeight.HIGH
-                self.risk_reasons.append("Static Website Hosting Enabled")
+                self.status_score += ObservationLevel.HIGH
+                self.findings.append("Static Website Hosting Enabled")
 
     def _get_scan_columns(self) -> list[tuple[str, str, Any, str]]:
         """Registry of dynamic columns."""
@@ -149,7 +151,6 @@ class S3SecurityResult(AuditResult):
                     self._render_policy_access,
                 )
             )
-
             columns.append(
                 (
                     "SSL Enforced",
@@ -158,18 +159,12 @@ class S3SecurityResult(AuditResult):
                     self._render_ssl_enforced,
                 )
             )
+
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
             columns.append(
                 ("Encryption", "encryption", self.encryption, self._render_encryption)
             )
-            columns.append(
-                (
-                    "SSE-C",
-                    "sse_c",
-                    self.sse_c,
-                    self._render_ssec,
-                )
-            )
+            columns.append(("SSE-C", "sse_c", self.sse_c, self._render_ssec))
 
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             columns.append(
@@ -211,6 +206,7 @@ class S3SecurityResult(AuditResult):
                     self._render_name_predictability,
                 )
             )
+
         if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
             columns.append(
                 (
@@ -224,7 +220,7 @@ class S3SecurityResult(AuditResult):
         return columns
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON always includes the full data set."""
+        """JSON output."""
         data = {
             "account_id": self.account_id,
             "resource_arn": self.resource_arn,
@@ -233,9 +229,9 @@ class S3SecurityResult(AuditResult):
             "creation_date": self.creation_date.isoformat()
             if self.creation_date
             else None,
-            "risk_score": self.risk_score,
-            "risk_level": self.risk_level,
-            "risk_reasons": self.risk_reasons,
+            "status_score": self.status_score,  # Renamed
+            "status": self.status,  # Renamed
+            "findings": self.findings,  # Renamed
             "check_type": self.check_type,
             "log_sources": self.log_sources,
         }
@@ -249,9 +245,10 @@ class S3SecurityResult(AuditResult):
         dummy = cls(resource_arn="", resource_name="", region="", check_type=check_type)
         base_headers = ["Account ID", "Bucket Name", "Region", "Creation Date"]
         dynamic_headers = [col[0] for col in dummy._get_scan_columns()]
-        risk_headers = ["Risk Level", "Reasons"]
 
-        return base_headers + dynamic_headers + risk_headers
+        status_headers = ["Status", "Findings"]
+
+        return base_headers + dynamic_headers + status_headers
 
     @classmethod
     def get_headers(cls, check_type: str = S3SecurityScanType.ALL) -> list[str]:
@@ -262,8 +259,8 @@ class S3SecurityResult(AuditResult):
                 "Bucket Name",
                 "Region",
                 "Creation Date",
-                "Risk Level",
-                "Reasons",
+                "Status",
+                "Findings",
             ]
 
         return cls.get_csv_headers(check_type)
@@ -279,15 +276,17 @@ class S3SecurityResult(AuditResult):
             else:
                 row.append(str(val))
 
-        row.append(self.risk_level)
-        row.append("; ".join(self.risk_reasons))
+        row.append(self.status)
+        row.append("; ".join(self.findings))
         return row
 
     def get_table_row(self) -> list[str]:
         """Table Row."""
         base_row = super().get_table_row()
-        risk_level_render = base_row[-2]
-        risk_reasons_render = base_row[-1]
+
+        # [Account, Resource, Region, StatusColorized, Findings]
+        status_render = base_row[-2]
+        findings_render = base_row[-1]
 
         date_str = (
             self.creation_date.strftime("%Y-%m-%d") if self.creation_date else "Unknown"
@@ -299,8 +298,8 @@ class S3SecurityResult(AuditResult):
             for _, _, _, render in self._get_scan_columns():
                 row.append(render)
 
-        row.append(risk_level_render)
-        row.append(risk_reasons_render)
+        row.append(status_render)
+        row.append(findings_render)
 
         return row
 
@@ -428,7 +427,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         if is_all or self.check_type == S3SecurityScanType.ACLS:
             acl_status = self.client.get_acl_status(bucket_name)
             if acl_status == "Enabled":
-                is_log_target = self.client.log_target(bucket_name)
+                is_log_target = self.client.is_log_target(bucket_name)
 
         if is_all or self.check_type == S3SecurityScanType.VERSIONING:
             version_config = self.client.get_versioning_status(bucket_name)
