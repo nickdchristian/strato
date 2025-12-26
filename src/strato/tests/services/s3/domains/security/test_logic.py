@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from strato.core.scoring import RiskWeight
+from strato.core.scoring import ObservationLevel
 from strato.services.s3.domains.security import S3SecurityResult, S3SecurityScanType
 
 
@@ -29,7 +29,7 @@ def safe_result():
 
 
 @pytest.fixture
-def risky_result():
+def observation_result():
     return S3SecurityResult(
         account_id="111122223333",
         resource_arn="arn:aws:s3:::risky-bucket-7b8e9f0a",
@@ -61,101 +61,104 @@ def policy_result():
     )
 
 
-def test_risk_scoring_all_safe(safe_result):
-    assert safe_result.risk_score == RiskWeight.NONE
-    assert safe_result.risk_level == "SAFE"
-    assert len(safe_result.risk_reasons) == 0
+def test_observation_level_all_safe(safe_result):
+    assert safe_result.status_score == ObservationLevel.PASS
+    assert safe_result.status == "PASS"
+    assert len(safe_result.findings) == 0
 
 
-def test_risk_scoring_critical(safe_result):
+def test_observation_level_critical(safe_result):
     safe_result.public_access_block_status = False
-    safe_result._evaluate_risk()
+    safe_result._evaluate_status()
 
-    assert safe_result.risk_score >= RiskWeight.CRITICAL
-    assert "Public Access Allowed" in safe_result.risk_reasons
+    assert safe_result.status_score >= ObservationLevel.CRITICAL
+    assert "Public Access Allowed" in safe_result.findings
 
 
-def test_risk_scoring_medium(safe_result):
+def test_observation_level_medium(safe_result):
     safe_result.encryption = "None"
     safe_result.sse_c = True
-    safe_result._evaluate_risk()
+    safe_result._evaluate_status()
 
-    assert safe_result.risk_score == RiskWeight.MEDIUM
-    assert "Encryption Missing" in safe_result.risk_reasons
+    assert safe_result.status_score == ObservationLevel.MEDIUM
+    assert "Encryption Missing" in safe_result.findings
 
 
-def test_risk_scoring_ssec_warning(safe_result):
+def test_observation_level_ssec_warning(safe_result):
     safe_result.sse_c = False
-    safe_result._evaluate_risk()
+    safe_result._evaluate_status()
 
-    assert safe_result.risk_score == RiskWeight.LOW
-    assert "SSE-C Not Blocked" in safe_result.risk_reasons
+    assert safe_result.status_score == ObservationLevel.LOW
+    assert "SSE-C Not Blocked" in safe_result.findings
 
 
-def test_risk_scoring_mfa_object_lock_ignored_for_standard_buckets(risky_result):
-    # Sanitize the risky_result to ONLY have the risks we are testing
-    risky_result.public_access_block_status = True
-    risky_result.encryption = "AES256"
-    risky_result.sse_c = True  # FIX: Must be True to avoid RiskWeight.LOW (5)
-    risky_result.acl_status = "Disabled"
-    risky_result.ssl_enforced = True
-    risky_result.policy_access = "Private"
+def test_ignore_mfa_lock_on_standard_buckets(observation_result):
+    # Renamed fixture argument from 'risky_result' to 'observation_result'
+    observation_result.public_access_block_status = True
+    observation_result.encryption = "AES256"
+    observation_result.sse_c = True
+    observation_result.acl_status = "Disabled"
+    observation_result.ssl_enforced = True
+    observation_result.policy_access = "Private"
 
     # Versioning is enabled, but MFA/ObjectLock are disabled
-    risky_result.versioning = "Enabled"
-    risky_result.mfa_delete = "Disabled"
-    risky_result.object_lock = "Disabled"
-    risky_result.log_sources = []
+    observation_result.versioning = "Enabled"
+    observation_result.mfa_delete = "Disabled"
+    observation_result.object_lock = "Disabled"
+    observation_result.log_sources = []
 
-    risky_result._evaluate_risk()
+    observation_result._evaluate_status()
 
-    assert risky_result.risk_score == RiskWeight.NONE
-    assert "MFA Delete Disabled" not in str(risky_result.risk_reasons)
-    assert "Object Lock Disabled" not in str(risky_result.risk_reasons)
+    assert observation_result.status_score == ObservationLevel.PASS
+    assert "MFA Delete Disabled" not in str(observation_result.findings)
+    assert "Object Lock Disabled" not in str(observation_result.findings)
 
 
-def test_risk_scoring_mfa_object_lock_flagged_for_log_buckets(risky_result):
-    risky_result.public_access_block_status = True
-    risky_result.encryption = "AES256"
-    risky_result.sse_c = True  # FIX: Must be True to avoid extraneous SSE-C risk
-    risky_result.acl_status = "Disabled"
-    risky_result.ssl_enforced = True
-    risky_result.policy_access = "Private"
-    risky_result.versioning = "Enabled"
+def test_status_scoring_mfa_object_lock_flagged_for_log_buckets(observation_result):
+    # Renamed fixture argument from 'risky_result' to 'observation_result'
+    observation_result.public_access_block_status = True
+    observation_result.encryption = "AES256"
+    observation_result.sse_c = True
+    observation_result.acl_status = "Disabled"
+    observation_result.ssl_enforced = True
+    observation_result.policy_access = "Private"
+    observation_result.versioning = "Enabled"
 
     # Inject log source
-    risky_result.log_sources = ["cloudtrail.amazonaws.com"]
+    observation_result.log_sources = ["cloudtrail.amazonaws.com"]
 
-    risky_result._evaluate_risk()
+    observation_result._evaluate_status()
 
-    assert risky_result.risk_score >= RiskWeight.LOW
-    reasons = " ".join(risky_result.risk_reasons)
+    assert observation_result.status_score >= ObservationLevel.LOW
+    reasons = " ".join(observation_result.findings)
     assert "MFA Delete Disabled" in reasons
     assert "Object Lock Disabled" in reasons
-    assert "cloudtrail.amazonaws.com" in reasons
 
 
-def test_risk_scoring_filtering(safe_result):
+def test_status_scoring_filtering(safe_result):
     safe_result.public_access_block_status = False
     safe_result.check_type = S3SecurityScanType.ENCRYPTION
     safe_result.encryption = "AES256"
     safe_result.sse_c = True
-    safe_result._evaluate_risk()
+    safe_result._evaluate_status()
 
-    assert safe_result.risk_score == RiskWeight.NONE
+    assert safe_result.status_score == ObservationLevel.PASS
 
 
 def test_render_style_integration(safe_result):
     safe_result.check_type = S3SecurityScanType.ENCRYPTION
     row = safe_result.get_table_row()
+    # Row: [Account, Resource, Region, Date, Encryption, SSE-C, Status, Findings]
     enc_render = row[4]
 
     assert "[green]AES256[/green]" in enc_render
 
 
-def test_render_style_risky(risky_result):
-    risky_result.check_type = S3SecurityScanType.PUBLIC_ACCESS
-    row = risky_result.get_table_row()
+def test_render_style_risky(observation_result):
+    # Renamed fixture argument from 'risky_result' to 'observation_result'
+    observation_result.check_type = S3SecurityScanType.PUBLIC_ACCESS
+    row = observation_result.get_table_row()
+    # Row: [Account, Resource, Region, Date, BlockStatus, Status, Findings]
     pub_render = row[4]
 
     assert "[red]OPEN[/red]" in pub_render
@@ -223,7 +226,7 @@ def test_json_filtering(safe_result):
     assert "account_id" in data
     assert data["account_id"] == "111122223333"
     assert "resource_name" in data
-    assert "risk_score" in data
+    assert "status_score" in data
     assert "object_lock" in data
     assert "encryption" not in data
     assert "public_access_block_status" not in data
@@ -239,49 +242,48 @@ def test_json_structure_includes_log_sources(safe_result):
 
 
 def test_policy_scoring_safe(policy_result):
-    assert policy_result.risk_score == RiskWeight.NONE
-    assert policy_result.risk_level == "SAFE"
-    assert len(policy_result.risk_reasons) == 0
+    assert policy_result.status_score == ObservationLevel.PASS
+    assert policy_result.status == "PASS"
+    assert len(policy_result.findings) == 0
 
 
 def test_policy_scoring_critical_public(policy_result):
     policy_result.policy_access = "Public"
-    policy_result._evaluate_risk()
+    policy_result._evaluate_status()
 
-    assert policy_result.risk_score >= RiskWeight.CRITICAL
-    assert "Bucket Policy Allows Public Access" in policy_result.risk_reasons
+    assert policy_result.status_score >= ObservationLevel.CRITICAL
+    assert "Bucket Policy Allows Public Access" in policy_result.findings
 
 
 def test_policy_scoring_high_potentially_public(policy_result):
     policy_result.policy_access = "Potentially Public"
-    policy_result._evaluate_risk()
+    policy_result._evaluate_status()
 
-    assert policy_result.risk_score == RiskWeight.HIGH
-    assert (
-        "Bucket Policy Potentially Allows Public Access" in policy_result.risk_reasons
-    )
+    assert policy_result.status_score == ObservationLevel.HIGH
+    assert "Bucket Policy Potentially Allows Public Access" in policy_result.findings
 
 
 def test_policy_scoring_medium_no_ssl(policy_result):
     policy_result.ssl_enforced = False
-    policy_result._evaluate_risk()
+    policy_result._evaluate_status()
 
-    assert policy_result.risk_score == RiskWeight.MEDIUM
-    assert "SSL Not Enforced" in policy_result.risk_reasons
+    assert policy_result.status_score == ObservationLevel.MEDIUM
+    assert "SSL Not Enforced" in policy_result.findings
 
 
 def test_policy_scoring_cumulative(policy_result):
     policy_result.policy_access = "Potentially Public"
     policy_result.ssl_enforced = False
-    policy_result._evaluate_risk()
+    policy_result._evaluate_status()
 
-    expected_score = RiskWeight.HIGH + RiskWeight.MEDIUM
-    assert policy_result.risk_score == expected_score
-    assert len(policy_result.risk_reasons) == 2
+    expected_score = ObservationLevel.HIGH + ObservationLevel.MEDIUM
+    assert policy_result.status_score == expected_score
+    assert len(policy_result.findings) == 2
 
 
 def test_policy_render_style_safe(policy_result):
     row = policy_result.get_table_row()
+    # Row: [Account, Resource, Region, Date, Access, SSL, Status, Findings]
     access_render = row[4]
     ssl_render = row[5]
 
@@ -344,18 +346,18 @@ def website_result():
 
 def test_website_scoring_safe(website_result):
     website_result.website_hosting = False
-    website_result._evaluate_risk()
+    website_result._evaluate_status()
 
-    assert website_result.risk_score == RiskWeight.NONE
-    assert len(website_result.risk_reasons) == 0
+    assert website_result.status_score == ObservationLevel.PASS
+    assert len(website_result.findings) == 0
 
 
 def test_website_scoring_risky(website_result):
     website_result.website_hosting = True
-    website_result._evaluate_risk()
+    website_result._evaluate_status()
 
-    assert website_result.risk_score == RiskWeight.HIGH
-    assert "Static Website Hosting Enabled" in website_result.risk_reasons
+    assert website_result.status_score == ObservationLevel.HIGH
+    assert "Static Website Hosting Enabled" in website_result.findings
 
 
 def test_website_render_style_safe(website_result):

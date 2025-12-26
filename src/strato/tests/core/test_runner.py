@@ -86,13 +86,11 @@ def test_assume_role_session(mock_boto_client, mock_boto_session):
 
     session = assume_role_session("123456789012", "MyRole")
 
-    # Verify STS call
     mock_sts.assume_role.assert_called_with(
         RoleArn="arn:aws:iam::123456789012:role/MyRole",
         RoleSessionName="StratoAuditSession",
     )
 
-    # Verify Session creation
     mock_boto_session.assert_called_with(
         aws_access_key_id="AKIA...",
         aws_secret_access_key="SECRET...",
@@ -153,7 +151,7 @@ def test_run_scan_multi_account_integration():
             result_cls=AuditResult,
             check_type="ALL",
             verbose=False,
-            fail_on_risk=False,
+            fail_on_finding=False,
             json_output=False,
             csv_output=False,
             failures_only=False,
