@@ -154,7 +154,7 @@ def run_scan(
         all_results,
         result_type=result_cls,
         check_type=check_type,
-        view_class=view_class
+        view_class=view_class,
     )
 
     if json_output:

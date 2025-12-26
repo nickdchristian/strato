@@ -1,6 +1,6 @@
 import csv
 import sys
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 from rich.console import Console
 from rich.table import Table
@@ -26,11 +26,11 @@ class ViewProtocol(Protocol):
 
 class AuditPresenter:
     def __init__(
-            self,
-            results: list[AuditResult],
-            result_type: type[AuditResult],
-            check_type: str = "ALL",
-            view_class: type[ViewProtocol] | None = None,
+        self,
+        results: list[AuditResult],
+        result_type: type[AuditResult],
+        check_type: str = "ALL",
+        view_class: type[ViewProtocol] | None = None,
     ):
         self.results = results
         self.result_type = result_type
@@ -60,7 +60,13 @@ class AuditPresenter:
             elif hasattr(result, "get_csv_row"):
                 row = result.get_csv_row()
             else:
-                row = [result.account_id, result.resource_name, result.region, result.status, str(result.findings)]
+                row = [
+                    result.account_id,
+                    result.resource_name,
+                    result.region,
+                    result.status,
+                    str(result.findings),
+                ]
 
             writer.writerow(row)
 

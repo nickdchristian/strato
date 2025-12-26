@@ -145,7 +145,6 @@ def test_status_scoring_filtering(safe_result):
     assert safe_result.status_score == ObservationLevel.PASS
 
 
-
 def test_render_style_integration(safe_result):
     safe_result.check_type = S3SecurityScanType.ENCRYPTION
 
@@ -291,6 +290,7 @@ def test_website_render_style_safe(website_result):
 
     assert "Disabled" in str(render)
     assert "green" in str(render)
+
 
 def test_website_render_style_risky(website_result):
     website_result.website_hosting = True

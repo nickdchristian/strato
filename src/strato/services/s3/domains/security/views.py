@@ -1,7 +1,10 @@
 from typing import Any
 
 from strato.core.style import AuditStatus, colorize
-from strato.services.s3.domains.security.checks import S3SecurityResult, S3SecurityScanType
+from strato.services.s3.domains.security.checks import (
+    S3SecurityResult,
+    S3SecurityScanType,
+)
 
 
 class S3SecurityView:
@@ -21,21 +24,31 @@ class S3SecurityView:
         status_headers = ["Status", "Findings"]
 
         dummy_result = S3SecurityResult(
-            resource_arn="", resource_name="", region="", account_id="", check_type=check_type
+            resource_arn="",
+            resource_name="",
+            region="",
+            account_id="",
+            check_type=check_type,
         )
-        dynamic_headers = [col_name for col_name, _, _ in cls._get_dynamic_columns(dummy_result)]
+        dynamic_headers = [
+            col_name for col_name, _, _ in cls._get_dynamic_columns(dummy_result)
+        ]
 
         return base_headers + dynamic_headers + status_headers
 
     @classmethod
     def format_row(cls, result: S3SecurityResult) -> list[str]:
-        date_str = result.creation_date.strftime("%Y-%m-%d") if result.creation_date else "Unknown"
+        date_str = (
+            result.creation_date.strftime("%Y-%m-%d")
+            if result.creation_date
+            else "Unknown"
+        )
         row = [result.account_id, result.resource_name, result.region, date_str]
 
         if result.check_type != S3SecurityScanType.ALL:
             dynamic_cols = cls._get_dynamic_columns(result)
             for _, _, render_func in dynamic_cols:
-                 row.append(render_func())
+                row.append(render_func())
 
         row.append(cls._render_status(result.status))
         row.append(cls._render_findings(result.findings))
@@ -44,7 +57,9 @@ class S3SecurityView:
 
     @classmethod
     def format_csv_row(cls, result: S3SecurityResult) -> list[str]:
-        date_str = result.creation_date.isoformat() if result.creation_date else "Unknown"
+        date_str = (
+            result.creation_date.isoformat() if result.creation_date else "Unknown"
+        )
         row = [result.account_id, result.resource_name, result.region, date_str]
 
         dynamic_cols = cls._get_dynamic_columns(result)
@@ -81,37 +96,118 @@ class S3SecurityView:
         is_all = r.check_type == S3SecurityScanType.ALL
 
         if is_all or r.check_type == S3SecurityScanType.PUBLIC_ACCESS:
-            columns.append(("Public Access Block", r.public_access_block_status, lambda: cls._render_bool(r.public_access_block_status, invert=False, true_text="Blocked", false_text="OPEN")))
+            columns.append(
+                (
+                    "Public Access Block",
+                    r.public_access_block_status,
+                    lambda: cls._render_bool(
+                        r.public_access_block_status,
+                        invert=False,
+                        true_text="Blocked",
+                        false_text="OPEN",
+                    ),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.POLICY:
-            columns.append(("Policy Access", r.policy_access, lambda: cls._render_policy(r.policy_access)))
-            columns.append(("SSL Enforced", r.ssl_enforced, lambda: cls._render_bool(r.ssl_enforced)))
+            columns.append(
+                (
+                    "Policy Access",
+                    r.policy_access,
+                    lambda: cls._render_policy(r.policy_access),
+                )
+            )
+            columns.append(
+                (
+                    "SSL Enforced",
+                    r.ssl_enforced,
+                    lambda: cls._render_bool(r.ssl_enforced),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.ENCRYPTION:
-            columns.append(("Encryption", r.encryption, lambda: cls._render_encryption(r.encryption)))
-            columns.append(("SSE-C", r.sse_c, lambda: cls._render_bool(r.sse_c, true_text="Blocked", false_text="Allowed")))
+            columns.append(
+                (
+                    "Encryption",
+                    r.encryption,
+                    lambda: cls._render_encryption(r.encryption),
+                )
+            )
+            columns.append(
+                (
+                    "SSE-C",
+                    r.sse_c,
+                    lambda: cls._render_bool(
+                        r.sse_c, true_text="Blocked", false_text="Allowed"
+                    ),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.ACLS:
-            columns.append(("ACL Status", r.acl_status, lambda: cls._render_acl(r.acl_status, r.log_target)))
-            columns.append(("Log Target", r.log_target, lambda: "Yes" if r.log_target else "No"))
+            columns.append(
+                (
+                    "ACL Status",
+                    r.acl_status,
+                    lambda: cls._render_acl(r.acl_status, r.log_target),
+                )
+            )
+            columns.append(
+                ("Log Target", r.log_target, lambda: "Yes" if r.log_target else "No")
+            )
 
         if is_all or r.check_type == S3SecurityScanType.VERSIONING:
-            columns.append(("Versioning", r.versioning, lambda: cls._render_simple_status(r.versioning)))
-            columns.append(("MFA Delete", r.mfa_delete, lambda: cls._render_simple_status(r.mfa_delete)))
+            columns.append(
+                (
+                    "Versioning",
+                    r.versioning,
+                    lambda: cls._render_simple_status(r.versioning),
+                )
+            )
+            columns.append(
+                (
+                    "MFA Delete",
+                    r.mfa_delete,
+                    lambda: cls._render_simple_status(r.mfa_delete),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.OBJECT_LOCK:
-            columns.append(("Object Lock", r.object_lock, lambda: cls._render_simple_status(r.object_lock)))
+            columns.append(
+                (
+                    "Object Lock",
+                    r.object_lock,
+                    lambda: cls._render_simple_status(r.object_lock),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
-            columns.append(("Name Predictability", r.name_predictability, lambda: cls._render_predictability(r.name_predictability)))
+            columns.append(
+                (
+                    "Name Predictability",
+                    r.name_predictability,
+                    lambda: cls._render_predictability(r.name_predictability),
+                )
+            )
 
         if is_all or r.check_type == S3SecurityScanType.WEBSITE_HOSTING:
-            columns.append(("Website Hosting", r.website_hosting, lambda: cls._render_bool(not r.website_hosting, true_text="Disabled", false_text="Enabled")))
+            columns.append(
+                (
+                    "Website Hosting",
+                    r.website_hosting,
+                    lambda: cls._render_bool(
+                        not r.website_hosting,
+                        true_text="Disabled",
+                        false_text="Enabled",
+                    ),
+                )
+            )
 
         return columns
 
     @staticmethod
-    def _render_bool(value: bool, invert=False, true_text="Yes", false_text="No") -> str:
+    def _render_bool(
+        value: bool, invert=False, true_text="Yes", false_text="No"
+    ) -> str:
         is_safe = not value if invert else value
         color = AuditStatus.PASS if is_safe else AuditStatus.FAIL
         text = true_text if value else false_text

@@ -30,6 +30,7 @@ class S3SecurityResult(AuditResult):
     Holds the state of the resource and the evaluation of that state (findings).
     Does NOT contain logic for how to print or colorize this data.
     """
+
     resource_arn: str
     resource_name: str
     region: str
@@ -137,7 +138,9 @@ class S3SecurityResult(AuditResult):
             "resource_arn": self.resource_arn,
             "resource_name": self.resource_name,
             "region": self.region,
-            "creation_date": self.creation_date.isoformat() if self.creation_date else None,
+            "creation_date": self.creation_date.isoformat()
+            if self.creation_date
+            else None,
             "status_score": self.status_score,
             "status": self.status,
             "findings": self.findings,
@@ -146,7 +149,7 @@ class S3SecurityResult(AuditResult):
                 "encryption": self.encryption,
                 "public_access_blocked": self.public_access_block_status,
                 "versioning": self.versioning,
-            }
+            },
         }
 
 
@@ -154,6 +157,7 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
     """
     Orchestrates the fetching of S3 data and creation of S3SecurityResult objects.
     """
+
     def __init__(
         self,
         check_type: str = S3SecurityScanType.ALL,
