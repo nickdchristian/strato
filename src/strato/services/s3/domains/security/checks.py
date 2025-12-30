@@ -126,7 +126,7 @@ class S3SecurityResult(AuditResult):
                 self.findings.append("Static Website Hosting Enabled")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "account_id": self.account_id,
             "resource_arn": self.resource_arn,
             "resource_name": self.resource_name,
@@ -138,12 +138,42 @@ class S3SecurityResult(AuditResult):
             "status": self.status,
             "findings": self.findings,
             "check_type": self.check_type,
-            "configuration": {
-                "encryption": self.encryption,
-                "public_access_blocked": self.public_access_block_status,
-                "versioning": self.versioning,
-            },
         }
+
+        config = {}
+        is_all = self.check_type == S3SecurityScanType.ALL
+
+        if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
+            config["public_access_blocked"] = self.public_access_block_status
+
+        if is_all or self.check_type == S3SecurityScanType.POLICY:
+            config["policy_access"] = self.policy_access
+            config["ssl_enforced"] = self.ssl_enforced
+
+        if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
+            config["encryption"] = self.encryption
+            config["sse_c_blocked"] = self.sse_c
+
+        if is_all or self.check_type == S3SecurityScanType.ACLS:
+            config["acl_status"] = self.acl_status
+            config["log_target"] = self.log_target
+            config["log_sources"] = self.log_sources
+
+        if is_all or self.check_type == S3SecurityScanType.VERSIONING:
+            config["versioning"] = self.versioning
+            config["mfa_delete"] = self.mfa_delete
+
+        if is_all or self.check_type == S3SecurityScanType.OBJECT_LOCK:
+            config["object_lock"] = self.object_lock
+
+        if is_all or self.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
+            config["name_predictability"] = self.name_predictability
+
+        if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
+            config["website_hosting"] = self.website_hosting
+
+        data["configuration"] = config
+        return data
 
 
 class S3SecurityScanner(BaseScanner[S3SecurityResult]):
