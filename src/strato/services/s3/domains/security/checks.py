@@ -1,13 +1,13 @@
+import math
+import re
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
-from strato.core.models import AuditResult
-from strato.core.scanner import BaseScanner
-from strato.core.scoring import ObservationLevel
-from strato.services.s3 import utils
+from strato.core.models import AuditResult, BaseScanner, ObservationLevel
 from strato.services.s3.client import S3Client
 
 
@@ -26,9 +26,7 @@ class S3SecurityScanType(StrEnum):
 @dataclass
 class S3SecurityResult(AuditResult):
     """
-    Pure Data Model.
-    Holds the state of the resource and the evaluation of that state (findings).
-    Does NOT contain logic for how to print or colorize this data.
+    Data container for S3 Security and Configuration details.
     """
 
     resource_arn: str
@@ -42,7 +40,7 @@ class S3SecurityResult(AuditResult):
     ssl_enforced: bool = False
     encryption: str = "None"
     sse_c: bool = False
-    acl_status: str = "Unknown"
+    acl_status: str | None = "Unknown"
     log_target: bool = False
     versioning: str = "Suspended"
     mfa_delete: str = "Disabled"
@@ -56,10 +54,6 @@ class S3SecurityResult(AuditResult):
         self._evaluate_status()
 
     def _evaluate_status(self):
-        """
-        Domain Logic: Evaluates the resource configuration against rules
-        to determine the risk score and findings.
-        """
         self.status_score = 0
         self.findings = []
 
@@ -132,7 +126,6 @@ class S3SecurityResult(AuditResult):
                 self.findings.append("Static Website Hosting Enabled")
 
     def to_dict(self) -> dict[str, Any]:
-        """Simple data serialization."""
         return {
             "account_id": self.account_id,
             "resource_arn": self.resource_arn,
@@ -154,10 +147,6 @@ class S3SecurityResult(AuditResult):
 
 
 class S3SecurityScanner(BaseScanner[S3SecurityResult]):
-    """
-    Orchestrates the fetching of S3 data and creation of S3SecurityResult objects.
-    """
-
     def __init__(
         self,
         check_type: str = S3SecurityScanType.ALL,
@@ -175,76 +164,94 @@ class S3SecurityScanner(BaseScanner[S3SecurityResult]):
         yield from self.client.list_buckets()
 
     def analyze_resource(self, bucket_data: dict) -> S3SecurityResult:
-        bucket_arn = bucket_data.get("BucketArn", f"arn:aws:s3:::{bucket_data['Name']}")
-        bucket_name = bucket_data["Name"]
-        region = self.client.get_bucket_region(bucket_name)
-        creation_date = bucket_data.get("CreationDate")
+        name = bucket_data["Name"]
+        arn = bucket_data.get("BucketArn", f"arn:aws:s3:::{name}")
+        created = bucket_data.get("CreationDate")
+        region = self.client.get_bucket_region(name)
 
-        # Default / Zero Values
-        public_access_blocked = False
-        bucket_policy_config = {
-            "Access": "Private",
-            "SSL_Enforced": False,
-            "Log_Sources": [],
-        }
-        encryption = "None"
-        sse_c_blocked = False
+        pab_status = False
+        policy = {"Access": "Unknown", "SSL_Enforced": False, "Log_Sources": []}
+        encryption = {"SSEAlgorithm": "None", "SSECBlocked": False}
+
         acl_status = "Unknown"
         is_log_target = False
-        version_config = {"Status": "Suspended", "MFADelete": "Disabled"}
-        object_lock = "Disabled"
-        name_predictability = "HIGH"
-        website_hosting = False
+        versioning_status = "Suspended"
+        mfa_delete_str = "Disabled"
+        object_lock_str = "Disabled"
+        predictability = "LOW"
+        website_hosting = None
 
         is_all = self.check_type == S3SecurityScanType.ALL
 
-        # Fetch details based on check type
         if is_all or self.check_type == S3SecurityScanType.PUBLIC_ACCESS:
-            public_access_blocked = self.client.get_public_access_status(bucket_name)
+            pab_status = self.client.get_public_access_status(name)
 
         if is_all or self.check_type == S3SecurityScanType.POLICY:
-            bucket_policy_config = self.client.get_bucket_policy(bucket_name)
+            policy = self.client.get_bucket_policy(name)
 
         if is_all or self.check_type == S3SecurityScanType.ENCRYPTION:
-            enc_status = self.client.get_encryption_status(bucket_name)
-            encryption = enc_status["SSEAlgorithm"]
-            sse_c_blocked = enc_status["SSECBlocked"]
+            encryption = self.client.get_encryption_status(name)
 
         if is_all or self.check_type == S3SecurityScanType.ACLS:
-            acl_status = self.client.get_acl_status(bucket_name)
+            acl_status = self.client.get_acl_status(name)["Status"]
+
             if acl_status == "Enabled":
-                is_log_target = self.client.is_log_target(bucket_name)
+                is_log_target = self.client.is_log_target(name)
 
         if is_all or self.check_type == S3SecurityScanType.VERSIONING:
-            version_config = self.client.get_versioning_status(bucket_name)
+            v_data = self.client.get_versioning_status(name)
+            versioning_status = v_data["Status"]
+            mfa_delete_str = "Enabled" if v_data["MFADelete"] else "Disabled"
 
         if is_all or self.check_type == S3SecurityScanType.OBJECT_LOCK:
-            object_lock = self.client.get_object_lock_status(bucket_name)
+            lock_data = self.client.get_object_lock_details(name)
+            object_lock_str = "Enabled" if lock_data["Status"] else "Disabled"
 
         if is_all or self.check_type == S3SecurityScanType.NAME_PREDICTABILITY:
-            name_predictability = utils.get_bucket_name_predictability(bucket_name)
+            predictability = self._calculate_entropy(name)
 
         if is_all or self.check_type == S3SecurityScanType.WEBSITE_HOSTING:
-            website_hosting = self.client.get_website_hosting_status(bucket_name)
+            website_hosting = self.client.get_website_hosting_status(name)
 
         return S3SecurityResult(
             account_id=self.account_id,
-            resource_arn=bucket_arn,
-            resource_name=bucket_name,
+            resource_arn=arn,
+            resource_name=name,
             region=region,
-            creation_date=creation_date,
-            public_access_block_status=public_access_blocked,
-            policy_access=bucket_policy_config["Access"],
-            ssl_enforced=bucket_policy_config["SSL_Enforced"],
-            log_sources=bucket_policy_config["Log_Sources"],
-            encryption=encryption,
-            sse_c=sse_c_blocked,
+            creation_date=created,
+            public_access_block_status=pab_status,
+            policy_access=policy["Access"],
+            ssl_enforced=policy["SSL_Enforced"],
+            log_sources=policy["Log_Sources"],
+            encryption=encryption["SSEAlgorithm"],
+            sse_c=encryption.get("SSECBlocked", False),
             acl_status=acl_status,
             log_target=is_log_target,
-            versioning=version_config["Status"],
-            mfa_delete=version_config["MFADelete"],
-            object_lock=object_lock,
-            name_predictability=name_predictability,
+            versioning=versioning_status,
+            mfa_delete=mfa_delete_str,
+            object_lock=object_lock_str,
+            name_predictability=predictability,
             website_hosting=website_hosting,
             check_type=self.check_type,
         )
+
+    @staticmethod
+    def _calculate_entropy(bucket_name: str) -> str:
+        """
+        Calculates the predictability of a bucket name using Shannon entropy analysis.
+        """
+        entropy = 0
+        has_guid_fragment = bool(re.search(r"[a-f0-9]{8,}", bucket_name))
+        character_frequency = Counter(bucket_name)
+        bucket_name_length = len(bucket_name)
+
+        for frequency in character_frequency.values():
+            probability = frequency / bucket_name_length
+            entropy -= probability * math.log2(probability)
+
+        if has_guid_fragment and entropy > 3.0:
+            return "LOW"
+        elif entropy < 2.5 or len(bucket_name) < 8:
+            return "HIGH"
+        else:
+            return "MODERATE"
