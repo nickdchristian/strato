@@ -33,9 +33,8 @@ def test_scanner_analyze_resource(mocker):
     mock_client.get_tags.return_value = {"Owner": "Platform"}
     mock_client.get_function_aliases.return_value = ["prod"]
     mock_client.get_event_source_mappings.return_value = ["arn:aws:sqs:source"]
-    mock_client.get_log_retention.return_value = 7
+    mock_client.get_log_retention.return_value = 14
 
-    # Mock metrics dictionary
     mock_client.get_metric_sum.side_effect = lambda metric, *args: {
         "Invocations": 1000000.0,
         "Errors": 100.0,
@@ -72,6 +71,8 @@ def test_scanner_analyze_resource(mocker):
     assert result.success_percentage == 99.99
     assert result.memory_utilization_percentage == 45.5
     assert result.estimated_monthly_cost > 8.5
+    assert result.log_retention_days == 14
+    assert result.insights_enabled is True
 
 
 def test_scanner_analyze_resource_arm64_cost(mocker):
@@ -80,9 +81,7 @@ def test_scanner_analyze_resource_arm64_cost(mocker):
     )
     mock_client = mock_client_cls.return_value
 
-    # FIX: Explicitly set return value to tuple to prevent unpacking error
     mock_client.get_function_url_details.return_value = (None, None)
-
     mock_client.get_metric_sum.return_value = 1000000.0
     mock_client.get_metric_avg.return_value = 500.0
     mock_client.get_tags.return_value = {}
