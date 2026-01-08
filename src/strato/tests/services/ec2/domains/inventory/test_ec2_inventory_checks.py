@@ -1,104 +1,114 @@
-from strato.services.awslambda.domains.inventory.checks import (
-    LambdaInventoryResult,
-    LambdaInventoryScanner,
+from datetime import datetime
+
+from strato.services.ec2.domains.inventory.checks import (
+    EC2InventoryResult,
+    EC2InventoryScanner,
 )
 
 
 def test_result_serialization():
-    result = LambdaInventoryResult(
-        resource_arn="arn:aws:lambda:us-east-1:123:function:my-func",
-        resource_name="my-func",
+    result = EC2InventoryResult(
+        resource_id="i-1",
+        resource_name="web-01",
         region="us-east-1",
-        runtime="python3.11",
-        tags={"Env": "Prod"},
-        function_aliases=["prod"],
+        account_id="123",
+        launch_time=datetime(2025, 1, 1),
+        security_group_list=["sg-1", "sg-2"],
+        highest_memory_14_days=None,
     )
 
     data = result.to_dict()
 
+    assert data["launch_time"] == "2025-01-01T00:00:00"
     assert "findings" not in data
-    assert "status_score" not in data
-    assert data["resource_name"] == "my-func"
-    assert data["tags"] == {"Env": "Prod"}
-    assert data["function_aliases"] == ["prod"]
+    assert data["security_group_list"] == ["sg-1", "sg-2"]
+    assert data["highest_memory_14_days"] is None
 
 
 def test_scanner_analyze_resource(mocker):
     mock_client_cls = mocker.patch(
-        "strato.services.awslambda.domains.inventory.checks.LambdaClient"
+        "strato.services.ec2.domains.inventory.checks.EC2Client"
     )
     mock_client = mock_client_cls.return_value
 
-    mock_client.get_function_url_details.return_value = ("https://url", "NONE")
-    mock_client.get_tags.return_value = {"Owner": "Platform"}
-    mock_client.get_function_aliases.return_value = ["prod"]
-    mock_client.get_event_source_mappings.return_value = ["arn:aws:sqs:source"]
-    mock_client.get_log_retention.return_value = 7
+    mock_client.check_optimizer_enrollment.return_value = "Active"
+    mock_client.get_volume_details.return_value = {
+        "vol-1": {"Encrypted": True, "Size": 50},
+        "vol-2": {"Encrypted": False, "Size": 50},
+    }
+    mock_client.get_image_details.return_value = {
+        "Name": "MyAMI",
+        "CreationDate": "2024-01-01",
+    }
+    mock_client.get_cpu_utilization.return_value = 45.0
+    mock_client.get_memory_utilization.return_value = None  # Agent missing
+    mock_client.get_network_utilization.return_value = 100.0
+    mock_client.get_security_group_rules.return_value = {
+        "Inbound": ["80", "443"],
+        "Outbound": ["All"],
+    }
+    mock_client.is_instance_managed.return_value = True
+    mock_client.get_termination_protection.return_value = False
 
-    # Mock metrics dictionary
-    mock_client.get_metric_sum.side_effect = lambda metric, *args: {
-        "Invocations": 1000000.0,
-        "Errors": 100.0,
-        "Throttles": 5.0,
-    }.get(metric, 0.0)
+    scanner = EC2InventoryScanner(account_id="123")
+    scanner.optimizer_status = "Active"
 
-    mock_client.get_metric_avg.return_value = 500.0
-    mock_client.get_metric_max.return_value = 1000.0
-    mock_client.get_lambda_insight_metric.return_value = 45.5
-
-    scanner = LambdaInventoryScanner(
-        check_type="INVENTORY", session=mocker.Mock(), account_id="123"
-    )
-    scanner.session.region_name = "us-east-1"
-
-    func_data = {
-        "FunctionName": "my-func",
-        "FunctionArn": "arn:aws:lambda:us-east-1:123:function:my-func",
-        "Runtime": "python3.11",
-        "MemorySize": 1024,
-        "Architectures": ["x86_64"],
-        "LastModified": "2025-01-01T00:00:00",
-        "VpcConfig": {"VpcId": "vpc-1", "SubnetIds": ["subnet-1"]},
-        "Layers": [{"Arn": "arn:layer:1"}],
-        "Environment": {"Variables": {"LOG_LEVEL": "DEBUG"}},
+    instance_data = {
+        "InstanceId": "i-12345",
+        "InstanceType": "t3.medium",
+        "State": {"Name": "running"},
+        "Placement": {"AvailabilityZone": "us-east-1a"},
+        "PrivateIpAddress": "10.0.0.1",
+        "PublicIpAddress": "1.2.3.4",
+        "LaunchTime": datetime(2025, 1, 1),
+        "ImageId": "ami-1",
+        "VpcId": "vpc-1",
+        "BlockDeviceMappings": [
+            {"Ebs": {"VolumeId": "vol-1"}},
+            {"Ebs": {"VolumeId": "vol-2"}},
+        ],
+        "SecurityGroups": [{"GroupId": "sg-1"}, {"GroupId": "sg-2"}],
+        "Tags": [{"Key": "Name", "Value": "ProdWeb"}],
     }
 
-    result = scanner.analyze_resource(func_data)
+    result = scanner.analyze_resource(instance_data)
 
-    assert isinstance(result, LambdaInventoryResult)
-    assert result.resource_name == "my-func"
-    assert result.function_url == "https://url"
-    assert result.function_url_auth_type == "NONE"
-    assert result.success_percentage == 99.99
-    assert result.memory_utilization_percentage == 45.5
-    assert result.estimated_monthly_cost > 8.5
+    assert isinstance(result, EC2InventoryResult)
+    assert result.resource_name == "ProdWeb"
+    assert result.resource_id == "i-12345"
+    assert result.region == "us-east-1"
+    assert result.managed is True
+
+    assert result.attached_volumes == 2
+    assert result.attached_volume_encryption_status == "Mixed"
+
+    assert result.highest_cpu_14_days == 45.0
+    assert result.highest_memory_14_days is None
+
+    assert result.security_groups_count == 2
+    assert result.security_group_list == ["sg-1", "sg-2"]
+    assert result.security_group_inbound_ports == ["80", "443"]
 
 
-def test_scanner_analyze_resource_arm64_cost(mocker):
-    mock_client_cls = mocker.patch(
-        "strato.services.awslambda.domains.inventory.checks.LambdaClient"
-    )
-    mock_client = mock_client_cls.return_value
+def test_scanner_optimizer_disabled(mocker):
+    mocker.patch("strato.services.ec2.domains.inventory.checks.EC2Client")
 
-    # FIX: Explicitly set return value to tuple to prevent unpacking error
-    mock_client.get_function_url_details.return_value = (None, None)
+    scanner = EC2InventoryScanner()
+    scanner.optimizer_status = "Disabled"
 
-    mock_client.get_metric_sum.return_value = 1000000.0
-    mock_client.get_metric_avg.return_value = 500.0
-    mock_client.get_tags.return_value = {}
-
-    scanner = LambdaInventoryScanner(
-        check_type="INVENTORY", session=mocker.Mock(), account_id="123"
-    )
-
-    func_data = {
-        "FunctionName": "arm-func",
-        "MemorySize": 1024,
-        "Architectures": ["arm64"],
+    instance_data = {
+        "InstanceId": "i-1",
+        "Placement": {"AvailabilityZone": "us-east-1a"},
+        "Tags": [],
     }
 
-    result = scanner.analyze_resource(func_data)
+    scanner.client.get_image_details.return_value = {}
+    scanner.client.get_volume_details.return_value = {}
+    scanner.client.get_security_group_rules.return_value = {
+        "Inbound": [],
+        "Outbound": [],
+    }
 
-    # Cost should be lower due to Graviton pricing
-    assert result.estimated_monthly_cost < 8.0
-    assert result.estimated_monthly_cost > 6.8
+    result = scanner.analyze_resource(instance_data)
+
+    assert result.rightsizing_recommendation == "OptimizerDisabled"
