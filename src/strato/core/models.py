@@ -77,7 +77,7 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
     def __init__(
         self,
         check_type: str = "ALL",
-        session: boto3.Session = None,
+        session: boto3.Session | None = None,
         account_id: str = "Unknown",
     ):
         self.check_type = check_type
@@ -94,10 +94,10 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
         pass
 
     @abstractmethod
-    def analyze_resource(self, resource: Any) -> T:
+    def analyze_resource(self, resource: Any) -> AuditResultType:
         pass
 
-    def scan(self, silent: bool = False) -> list[T]:
+    def scan(self, silent: bool = False) -> list[AuditResultType]:
         """
         Orchestrates the fetching and analyzing of resources.
         Uses console_err for status to avoid polluting stdout.
