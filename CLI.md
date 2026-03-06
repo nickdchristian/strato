@@ -20,6 +20,7 @@ $ sto [OPTIONS] COMMAND [ARGS]...
 * `ec2`: EC2 Auditing &amp; Inventory
 * `lambda`: Lambda Auditing &amp; Inventory
 * `rds`: RDS Auditing &amp; Inventory
+* `ebs`: EBS Auditing &amp; Inventory
 
 ## `sto s3`
 
@@ -571,4 +572,57 @@ $ sto rds reserved scan [OPTIONS]
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
 * `--org-role TEXT`: IAM role to assume for multi-account scan
+* `--help`: Show this message and exit.
+
+## `sto ebs`
+
+EBS Auditing &amp; Inventory
+
+**Usage**:
+
+```console
+$ sto ebs [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `inventory`: EBS Volume Inventory &amp; Audit
+
+### `sto ebs inventory`
+
+EBS Volume Inventory &amp; Audit
+
+**Usage**:
+
+```console
+$ sto ebs inventory [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `scan`
+
+#### `sto ebs inventory scan`
+
+**Usage**:
+
+```console
+$ sto ebs inventory scan [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--json`
+* `--csv`
+* `--region TEXT`
+* `--org-role TEXT`
 * `--help`: Show this message and exit.
