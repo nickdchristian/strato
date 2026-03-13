@@ -3,6 +3,7 @@ import typer
 from strato.services.awslambda.cli import lambda_app
 from strato.services.ebs.cli import ebs_app
 from strato.services.ec2.cli import ec2_app
+from strato.services.ecs.cli import ecs_app
 from strato.services.rds.cli import rds_app
 from strato.services.s3.cli import s3_app
 
@@ -12,6 +13,7 @@ app.add_typer(ec2_app, name="ec2")
 app.add_typer(lambda_app, name="lambda")
 app.add_typer(rds_app, name="rds")
 app.add_typer(ebs_app, name="ebs")
+app.add_typer(ecs_app, name="ecs")
 
 if __name__ == "__main__":
     app()

@@ -21,6 +21,7 @@ $ sto [OPTIONS] COMMAND [ARGS]...
 * `lambda`: Lambda Auditing &amp; Inventory
 * `rds`: RDS Auditing &amp; Inventory
 * `ebs`: EBS Auditing &amp; Inventory
+* `ecs`: EC2 Auditing &amp; Inventory
 
 ## `sto s3`
 
@@ -625,4 +626,79 @@ $ sto ebs inventory scan [OPTIONS]
 * `--csv`
 * `--region TEXT`
 * `--org-role TEXT`
+* `--help`: Show this message and exit.
+
+## `sto ecs`
+
+EC2 Auditing &amp; Inventory
+
+**Usage**:
+
+```console
+$ sto ecs [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `inventory`: ECS Inventory &amp; Audit
+
+### `sto ecs inventory`
+
+ECS Inventory &amp; Audit
+
+**Usage**:
+
+```console
+$ sto ecs inventory [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `all`: Run all scan.
+* `scan`: Gather optimized inventoryof ECS Clusters...
+
+#### `sto ecs inventory all`
+
+Run all scan.
+
+**Usage**:
+
+```console
+$ sto ecs inventory all [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--json`: Output raw JSON
+* `--csv`: Output CSV
+* `--region TEXT`: Specific AWS Region to scan
+* `--org-role TEXT`: IAM role to assume for multi-account scan
+* `--help`: Show this message and exit.
+
+#### `sto ecs inventory scan`
+
+Gather optimized inventoryof ECS Clusters and Services
+
+**Usage**:
+
+```console
+$ sto ecs inventory scan [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--json`: Output raw JSON
+* `--csv`: Output CSV
+* `--region TEXT`: Specific AWS Region to scan
+* `--org-role TEXT`: IAM role to assume for multi-account scan
 * `--help`: Show this message and exit.
