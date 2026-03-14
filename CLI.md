@@ -311,7 +311,7 @@ $ sto ec2 [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `inventory`: EC2 Inventory &amp; Audit
-* `reserved`: EC2 Reserved Instance Contracts
+* `reserved`: EC2 Reserved Instances
 
 ### `sto ec2 inventory`
 
@@ -347,7 +347,7 @@ $ sto ec2 inventory all [OPTIONS]
 * `--verbose / --no-verbose`: [default: no-verbose]
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
-* `--region TEXT`: Specific AWS Region to scan (e.g. us-east-1)
+* `--region TEXT`: Specific AWS Region to scan
 * `--org-role TEXT`: IAM role to assume for multi-account scan
 * `--help`: Show this message and exit.
 
@@ -366,13 +366,13 @@ $ sto ec2 inventory scan [OPTIONS]
 * `--verbose / --no-verbose`: [default: no-verbose]
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
-* `--region TEXT`: Specific AWS Region to scan (e.g. us-east-1)
+* `--region TEXT`: Specific AWS Region to scan
 * `--org-role TEXT`: IAM role to assume for multi-account scan
 * `--help`: Show this message and exit.
 
 ### `sto ec2 reserved`
 
-EC2 Reserved Instance Contracts
+EC2 Reserved Instances
 
 **Usage**:
 
@@ -386,11 +386,11 @@ $ sto ec2 reserved [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `scan`: Scan for Purchased Reserved Instances...
+* `scan`: Inventory of EC2 Reserved Instances
 
 #### `sto ec2 reserved scan`
 
-Scan for Purchased Reserved Instances (Active Contracts).
+Inventory of EC2 Reserved Instances
 
 **Usage**:
 
@@ -441,11 +441,31 @@ $ sto lambda inventory [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `scan`: Gather a comprehensive inventory of Lambda...
+* `all`: Run all scan.
+* `scan`: Gather a inventory of Lambda Functions
+
+#### `sto lambda inventory all`
+
+Run all scan.
+
+**Usage**:
+
+```console
+$ sto lambda inventory all [OPTIONS]
+```
+
+**Options**:
+
+* `--verbose / --no-verbose`: [default: no-verbose]
+* `--json`: Output raw JSON
+* `--csv`: Output CSV
+* `--region TEXT`: Specific AWS Region to scan
+* `--org-role TEXT`: IAM role to assume for multi-account scan
+* `--help`: Show this message and exit.
 
 #### `sto lambda inventory scan`
 
-Gather a comprehensive inventory of Lambda Functions
+Gather a inventory of Lambda Functions
 
 **Usage**:
 
@@ -663,7 +683,7 @@ $ sto ecs inventory [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `all`: Run all scan.
-* `scan`: Gather optimized inventoryof ECS Clusters...
+* `scan`: Gather inventory of ECS Clusters and Services
 
 #### `sto ecs inventory all`
 
@@ -686,7 +706,7 @@ $ sto ecs inventory all [OPTIONS]
 
 #### `sto ecs inventory scan`
 
-Gather optimized inventoryof ECS Clusters and Services
+Gather inventory of ECS Clusters and Services
 
 **Usage**:
 

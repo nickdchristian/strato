@@ -17,10 +17,10 @@ def create_scan_command(target_scan_type: ECSInventoryScanType, command_help_tex
         verbose: bool = False,
         json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
         csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
-        region: str = typer.Option(
+        region: str | None = typer.Option(
             None, "--region", help="Specific AWS Region to scan"
         ),
-        org_role: str = typer.Option(
+        org_role: str | None = typer.Option(
             None, "--org-role", help="IAM role to assume for multi-account scan"
         ),
     ):
@@ -54,8 +54,7 @@ def create_scan_command(target_scan_type: ECSInventoryScanType, command_help_tex
 
 
 HELP_TEXT_MAP = {
-    ECSInventoryScanType.INVENTORY: "Gather optimized inventory"
-    "of ECS Clusters and Services",
+    ECSInventoryScanType.INVENTORY: "Gather inventory of ECS Clusters and Services",
 }
 
 for scan_type in ECSInventoryScanType:

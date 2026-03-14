@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -8,6 +9,8 @@ import boto3
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.ebs.client import EBSClient
+
+logger = logging.getLogger(__name__)
 
 
 class EBSInventoryScanType(StrEnum):
@@ -78,33 +81,29 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
     GP3_FREE_IOPS = 3000
     GP3_FREE_THROUGHPUT = 125
 
+    @property
+    def service_name(self) -> str:
+        return f"EBS Inventory ({self.check_type})"
+
     def __init__(
         self,
-        check_type: str = EBSInventoryScanType.ALL,
-        session: boto3.Session | None = None,
-        account_id: str = "Unknown",
+        check_type: str,
+        session: boto3.Session,
+        account_id: str,
     ):
         super().__init__(check_type, session, account_id)
-        self.client = EBSClient(session=self.session)
+        self.client = EBSClient(session=self.session, account_id=self.account_id)
         self.optimizer_status = self.client.check_optimizer_enrollment()
         self.snapshot_map: dict[str, list[Any]] = {}
         self.instance_map: dict[str, str] = {}
         self.recommendations: dict[str, dict[str, Any]] = {}
-
-    @property
-    def service_name(self) -> str:
-        return f"EBS Inventory ({self.check_type})"
 
     def fetch_resources(self) -> Iterable[dict[str, Any]]:
         volumes = self.client.list_volumes()
         self.snapshot_map = self.client.get_all_snapshots()
         self.instance_map = self.client.get_instance_states()
 
-        region = (
-            self.session.region_name
-            if self.session and self.session.region_name
-            else "us-east-1"
-        )
+        region = str(self.session.region_name or "Unknown")
         arns = [
             f"arn:aws:ec2:{region}:{self.account_id}:volume/{v.get('VolumeId', '')}"
             for v in volumes
@@ -155,29 +154,31 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
             return round((float(size_gb) * 0.125) + (float(iops) * 0.065), 2)
         return 0.0
 
-    def analyze_resource(self, resource: dict[str, Any]) -> EBSInventoryResult:
-        vol_id = str(resource.get("VolumeId", ""))
-        region = str(resource.get("Region", ""))
+    def analyze_resource(self, resource: Any) -> EBSInventoryResult:
+        vol_data = resource
+        vol_id = str(vol_data.get("VolumeId", ""))
+        region = str(vol_data.get("Region", "Unknown"))
         vol_arn = f"arn:aws:ec2:{region}:{self.account_id}:volume/{vol_id}"
 
-        raw_vol_type = resource.get("VolumeType")
+        logger.debug(f"[{self.account_id}][{vol_id}] Starting analysis...")
+        raw_vol_type = vol_data.get("VolumeType")
         vol_type = str(raw_vol_type) if raw_vol_type else None
 
-        size_gb = int(resource.get("Size") or 0)
-        iops = int(resource.get("Iops") or 0)
-        throughput = int(resource.get("Throughput") or 0)
+        size_gb = int(vol_data.get("Size") or 0)
+        iops = int(vol_data.get("Iops") or 0)
+        throughput = int(vol_data.get("Throughput") or 0)
 
-        raw_tags = resource.get("Tags") or []
+        raw_tags = vol_data.get("Tags") or []
         tags = {str(t.get("Key", "")): str(t.get("Value", "")) for t in raw_tags}
 
-        raw_attachments = resource.get("Attachments") or []
+        raw_attachments = vol_data.get("Attachments") or []
         attached_ids = [str(a.get("InstanceId", "")) for a in raw_attachments]
         instance_states = [
             str(self.instance_map.get(iid, "Unknown")) for iid in attached_ids
         ]
 
         util_pct, last_accessed = self._calculate_utilization(
-            vol_id, resource.get("CreateTime")
+            vol_id, vol_data.get("CreateTime")
         )
 
         monthly_cost = self._calculate_monthly_cost(
@@ -185,6 +186,8 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
         )
 
         rec = self.recommendations.get(vol_arn) or {}
+
+        logger.debug(f"[{self.account_id}][{vol_id}] Analysis complete.")
 
         return EBSInventoryResult(
             account_id=self.account_id,
@@ -195,16 +198,16 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
             volume_id=vol_id,
             type=vol_type,
             size=size_gb,
-            iops=resource.get("Iops"),
-            throughput=resource.get("Throughput"),
-            availability_zone=resource.get("AvailabilityZone"),
-            create_date=resource.get("CreateTime"),
-            encrypted=bool(resource.get("Encrypted", False)),
-            kms_key_id=resource.get("KmsKeyId"),
-            kms_key_alias=self.client.get_kms_alias(resource.get("KmsKeyId")),
+            iops=vol_data.get("Iops"),
+            throughput=vol_data.get("Throughput"),
+            availability_zone=vol_data.get("AvailabilityZone"),
+            create_date=vol_data.get("CreateTime"),
+            encrypted=bool(vol_data.get("Encrypted", False)),
+            kms_key_id=vol_data.get("KmsKeyId"),
+            kms_key_alias=self.client.get_kms_alias(vol_data.get("KmsKeyId")),
             attached_resources=attached_ids,
             instance_states=instance_states,
-            state=str(resource.get("State", "Unknown")),
+            state=str(vol_data.get("State", "Unknown")),
             tags=tags,
             utilization_percentage_30_days=util_pct,
             last_accessed_date=last_accessed,

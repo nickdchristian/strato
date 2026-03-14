@@ -21,22 +21,22 @@ def create_scan_command(target_scan_type: EC2InventoryScanType, command_help_tex
         verbose: bool = False,
         json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
         csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
-        region: str = typer.Option(
-            None, "--region", help="Specific AWS Region to scan (e.g. us-east-1)"
+        region: str | None = typer.Option(
+            None, "--region", help="Specific AWS Region to scan"
         ),
-        org_role: str = typer.Option(
+        org_role: str | None = typer.Option(
             None, "--org-role", help="IAM role to assume for multi-account scan"
         ),
     ):
         if not (json_output or csv_output):
             console_err.print(
-                "\n[bold red]"
-                "Error:"
-                "[/bold red] Inventory data is too wide for table output."
+                """\n[bold red]
+                Error:
+                    [/bold red] Inventory data is too wide for table output."""
             )
             console_err.print(
-                "Please specify a structured format: "
-                "[green]--json[/green] or [green]--csv[/green]\n"
+                """Please specify a structured format:
+                    [green]--json[/green] or [green]--csv[/green]\n"""
             )
             raise typer.Exit(1)
 

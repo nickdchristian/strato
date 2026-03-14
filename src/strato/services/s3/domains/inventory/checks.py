@@ -1,11 +1,16 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, cast
+
+import boto3
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.s3.client import S3Client
+
+logger = logging.getLogger(__name__)
 
 
 class S3InventoryScanType(StrEnum):
@@ -19,17 +24,17 @@ class S3InventoryResult(AuditResult):
     Data container for S3 Inventory and Configuration details.
     """
 
-    resource_arn: str
-    resource_name: str
-    region: str
-    account_id: str
+    resource_arn: str = ""
+    resource_name: str = ""
+    region: str = ""
+    account_id: str = "Unknown"
 
     creation_date: datetime | None = None
     encryption_type: str | None = None
     kms_master_key_id: str | None = None
     bucket_key_enabled: bool = False
 
-    server_access_logging: str = "Disabled"
+    server_access_logging: str | None = "Disabled"
     block_all_public_access: bool = False
     bucket_ownership: str | None = None
     acl_status: str = "Disabled"
@@ -98,33 +103,31 @@ class S3InventoryResult(AuditResult):
 
 
 class S3InventoryScanner(BaseScanner[S3InventoryResult]):
+    is_global_service = True
+
     def __init__(
         self,
         check_type: str = S3InventoryScanType.ALL,
-        session=None,
-        account_id="Unknown",
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
     ):
         super().__init__(check_type, session, account_id)
-        self.client = S3Client(session=self.session)
-
-    is_global_service = True
+        self.client = S3Client(session=self.session, account_id=self.account_id)
 
     @property
     def service_name(self) -> str:
         return f"S3 Inventory ({self.check_type})"
 
-    def fetch_resources(self) -> Iterable[dict]:
+    def fetch_resources(self) -> Iterable[dict[str, Any]]:
         yield from self.client.list_buckets()
 
-    def analyze_resource(self, bucket_data: dict) -> S3InventoryResult:
-        """
-        Compiles a comprehensive inventory of a single S3 bucket.
-        """
-        bucket_name = bucket_data["Name"]
+    def analyze_resource(self, resource: Any) -> S3InventoryResult:
+        bucket_data = cast(dict[str, Any], resource)
+        bucket_name = str(bucket_data.get("Name", "Unknown"))
         bucket_arn = f"arn:aws:s3:::{bucket_name}"
         creation_date = bucket_data.get("CreationDate")
 
-        region = self.client.get_bucket_region(bucket_name)
+        region = str(self.client.get_bucket_region(bucket_name) or "Unknown")
         bucket_tags = self.client.get_bucket_tags(bucket_name)
 
         encryption_status = self.client.get_encryption_status(bucket_name)
@@ -149,6 +152,16 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
         total_bucket_size = sum(value["Size"] for value in storage_metrics.values())
         total_object_count = sum(value["Count"] for value in storage_metrics.values())
 
+        ret_days = object_lock_details.get("RetentionDays")
+        ret_years = object_lock_details.get("RetentionYears")
+        retention = (
+            f"{ret_days} Days"
+            if ret_days
+            else (f"{ret_years} Years" if ret_years else None)
+        )
+
+        logger.debug(f"[{bucket_name}] Analysis complete.")
+
         return S3InventoryResult(
             account_id=self.account_id,
             resource_arn=bucket_arn,
@@ -157,17 +170,20 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
             creation_date=creation_date,
             encryption_type=encryption_status.get("SSEAlgorithm"),
             kms_master_key_id=encryption_status.get("KMSMasterKeyID"),
-            bucket_key_enabled=encryption_status.get("BucketKeyEnabled", False),
-            block_all_public_access=public_access_status,
+            bucket_key_enabled=bool(encryption_status.get("BucketKeyEnabled", False)),
+            block_all_public_access=bool(public_access_status),
             has_bucket_policy=bucket_policy.get("Access") != "Error",
-            bucket_ownership=self.client.get_acl_status(bucket_name)["Ownership"],
-            acl_status=self.client.get_acl_status(bucket_name)["Status"],
-            server_access_logging=self.client.get_logging_status(bucket_name),
+            bucket_ownership=self.client.get_acl_status(bucket_name).get("Ownership"),
+            acl_status=self.client.get_acl_status(bucket_name).get(
+                "Status", "Disabled"
+            ),
+            server_access_logging=self.client.get_logging_status(bucket_name)
+            or "Disabled",
             versioning_status=versioning_status.get("Status", "Suspended"),
-            mfa_delete=versioning_status.get("MFADelete", "Disabled"),
-            object_lock=object_lock_details.get("Status", "Disabled"),
+            mfa_delete="Enabled" if versioning_status.get("MFADelete") else "Disabled",
+            object_lock="Enabled" if object_lock_details.get("Status") else "Disabled",
             object_lock_mode=object_lock_details.get("Mode"),
-            object_lock_retention=object_lock_details.get("Retention"),
+            object_lock_retention=retention,
             static_website_hosting="Enabled"
             if self.client.get_website_hosting_status(bucket_name)
             else "Disabled",
@@ -177,8 +193,19 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
             intelligent_tiering_config="Enabled"
             if intelligent_tiering_configs
             else "Disabled",
-            **replication_info,
-            **lifecycle_info,
+            replication_status=str(
+                replication_info.get("replication_status", "Disabled")
+            ),
+            replication_rule_name=replication_info.get("replication_rule_name"),
+            replication_destination=replication_info.get("replication_destination"),
+            replication_storage_class=replication_info.get("replication_storage_class"),
+            replication_kms_encrypted=bool(
+                replication_info.get("replication_kms_encrypted", False)
+            ),
+            replication_cost_impact=replication_info.get("replication_cost_impact"),
+            lifecycle_status=str(lifecycle_info.get("lifecycle_status", "Disabled")),
+            lifecycle_rule_count=int(lifecycle_info.get("lifecycle_rule_count", 0)),
+            lifecycle_active_rule_id=lifecycle_info.get("lifecycle_active_rule_id"),
             notification_configs=self.client.get_notification_configuration_count(
                 bucket_name
             ),
@@ -198,7 +225,7 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
             glacier_object_count=storage_metrics["Glacier"]["Count"],
             deep_archive_object_count=storage_metrics["Glacier-Deep-Archive"]["Count"],
             total_bucket_size_gb=round(total_bucket_size, 2),
-            total_object_count=total_object_count,
+            total_object_count=int(total_object_count),
             all_requests_count=request_metrics["All"],
             get_requests_count=request_metrics["Get"],
             put_requests_count=request_metrics["Put"],
@@ -207,14 +234,10 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
         )
 
     def _extract_replication_info(
-        self, rules: list[dict], region: str
+        self, rules: list[dict[str, Any]], region: str
     ) -> dict[str, Any]:
-        """
-        Helper to extract summary data from replication rules.
-        """
-        cost_impact = self.client.calculate_replication_cost_impact(region, rules)
-        if cost_impact == "None":
-            cost_impact = None
+        cost_impact_list = self.client.calculate_replication_cost_impact(region, rules)
+        cost_impact = ", ".join(cost_impact_list) if cost_impact_list else None
 
         if not rules:
             return {
@@ -233,10 +256,7 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
         }
 
     @staticmethod
-    def _extract_lifecycle_info(rules: list[dict]) -> dict[str, Any]:
-        """
-        Helper to extract summary data from lifecycle rules.
-        """
+    def _extract_lifecycle_info(rules: list[dict[str, Any]]) -> dict[str, Any]:
         if not rules:
             return {
                 "lifecycle_status": "Disabled",

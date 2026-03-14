@@ -6,6 +6,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 from rich.console import Console
+from rich.logging import RichHandler
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.core.presenter import AuditPresenter
@@ -17,9 +18,14 @@ def setup_logging(verbose: bool):
     log_level = logging.DEBUG if verbose else logging.ERROR
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stderr,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console_err, rich_tracebacks=True)],
     )
+
+    logging.getLogger("boto3").setLevel(logging.WARNING)
+    logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def get_org_accounts() -> list[dict]:
@@ -173,7 +179,7 @@ def run_scan(
     json_output: bool,
     csv_output: bool,
     failures_only: bool,
-    org_role: str = None,
+    org_role: str | None = None,
     view_class: Any = None,
     region: str | None = None,
 ):

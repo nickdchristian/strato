@@ -1,10 +1,15 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, cast
+
+import boto3
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.rds.client import RDSClient
+
+logger = logging.getLogger(__name__)
 
 
 class RDSInventoryScanType(StrEnum):
@@ -26,7 +31,7 @@ class RDSInventoryResult(AuditResult):
 
     db_identifier: str = ""
     db_cluster_identifier: str = ""
-    status: str = ""
+    state: str = ""
     rds_extended_support: str = "Unknown"
     engine: str = ""
     engine_version: str = ""
@@ -99,72 +104,79 @@ class RDSInventoryScanner(BaseScanner[RDSInventoryResult]):
     def __init__(
         self,
         check_type: str = RDSInventoryScanType.ALL,
-        session=None,
-        account_id="Unknown",
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
     ):
         super().__init__(check_type, session, account_id)
-        self.client = RDSClient(session=self.session)
+        self.client = RDSClient(session=self.session, account_id=self.account_id)
 
     @property
     def service_name(self) -> str:
         return f"RDS Inventory ({self.check_type})"
 
-    def fetch_resources(self) -> Iterable[dict]:
+    def fetch_resources(self) -> Iterable[dict[str, Any]]:
         yield from self.client.list_instances()
 
-    def analyze_resource(self, resource_data: dict) -> RDSInventoryResult:
-        db_id = resource_data.get("DBInstanceIdentifier", "")
-        arn = resource_data.get("DBInstanceArn", "")
-        tags = {t["Key"]: t["Value"] for t in resource_data.get("TagList", [])}
+    def analyze_resource(self, resource: Any) -> RDSInventoryResult:
+        resource_data = cast(dict[str, Any], resource)
+        db_id = str(resource_data.get("DBInstanceIdentifier", ""))
+        arn = str(resource_data.get("DBInstanceArn", ""))
+        tags = {
+            str(t["Key"]): str(t["Value"]) for t in resource_data.get("TagList", [])
+        }
 
         cpu_peak, cpu_mean = self.client.get_cpu_utilization(db_id)
         conn_peak, conn_mean = self.client.get_database_connections(db_id)
         write_peak, write_mean = self.client.get_write_throughput(db_id)
         read_peak, read_mean = self.client.get_read_throughput(db_id)
 
-        az = resource_data.get("AvailabilityZone", "")
+        az = str(resource_data.get("AvailabilityZone", ""))
         sg_ids = [
-            sg["VpcSecurityGroupId"]
+            str(sg["VpcSecurityGroupId"])
             for sg in resource_data.get("VpcSecurityGroups", [])
         ]
         param_groups = [
-            pg["DBParameterGroupName"]
+            str(pg["DBParameterGroupName"])
             for pg in resource_data.get("DBParameterGroups", [])
         ]
 
         endpoint = resource_data.get("Endpoint", {})
-        port = endpoint.get("Port", 0)
+        port = int(endpoint.get("Port", 0))
 
-        log_exports = resource_data.get("EnabledCloudwatchLogsExports", [])
+        log_exports = [
+            str(x) for x in resource_data.get("EnabledCloudwatchLogsExports", [])
+        ]
         option_groups = [
-            og["OptionGroupName"]
+            str(og["OptionGroupName"])
             for og in resource_data.get("OptionGroupMemberships", [])
         ]
+
+        logger.debug(f"[{db_id}] Analysis complete.")
 
         return RDSInventoryResult(
             account_id=self.account_id,
             resource_id=db_id,
             resource_name=db_id,
             resource_arn=arn,
-            region=az[:-1] if az else "",
+            region=az[:-1] if az else str(self.session.region_name or "Unknown"),
             db_identifier=db_id,
-            db_cluster_identifier=resource_data.get("DBClusterIdentifier", ""),
-            status=resource_data.get("DBInstanceStatus", "unknown"),
+            db_cluster_identifier=str(resource_data.get("DBClusterIdentifier", "")),
+            state=str(resource_data.get("DBInstanceStatus", "unknown")),
             rds_extended_support="Unknown",
-            engine=resource_data.get("Engine", ""),
-            engine_version=resource_data.get("EngineVersion", ""),
+            engine=str(resource_data.get("Engine", "")),
+            engine_version=str(resource_data.get("EngineVersion", "")),
             availability_zone=az,
-            size=resource_data.get("DBInstanceClass", ""),
-            vpc=resource_data.get("DBSubnetGroup", {}).get("VpcId", ""),
+            size=str(resource_data.get("DBInstanceClass", "")),
+            vpc=str(resource_data.get("DBSubnetGroup", {}).get("VpcId", "")),
             port=port,
             security_group_ids=sg_ids,
-            publicly_accessible=resource_data.get("PubliclyAccessible", False),
-            multi_az=resource_data.get("MultiAZ", False),
-            storage_type=resource_data.get("StorageType", ""),
-            provisioned_iops=resource_data.get("Iops", 0),
-            storage_throughput=resource_data.get("StorageThroughput", 0),
-            iam_auth_enabled=resource_data.get(
-                "IAMDatabaseAuthenticationEnabled", False
+            publicly_accessible=bool(resource_data.get("PubliclyAccessible", False)),
+            multi_az=bool(resource_data.get("MultiAZ", False)),
+            storage_type=str(resource_data.get("StorageType", "")),
+            provisioned_iops=int(resource_data.get("Iops", 0)),
+            storage_throughput=int(resource_data.get("StorageThroughput", 0)),
+            iam_auth_enabled=bool(
+                resource_data.get("IAMDatabaseAuthenticationEnabled", False)
             ),
             ca_certificate_identifier=resource_data.get("CACertificateIdentifier", ""),
             parameter_groups=param_groups,
@@ -178,26 +190,26 @@ class RDSInventoryScanner(BaseScanner[RDSInventoryResult]):
             mean_read_throughput_90_days=read_mean,
             peak_write_throughput_90_days=write_peak,
             mean_write_throughput_90_days=write_mean,
-            allocated_storage=resource_data.get("AllocatedStorage", 0),
-            max_allocated_storage=resource_data.get("MaxAllocatedStorage", 0),
-            storage_encrypted=resource_data.get("StorageEncrypted", False),
-            backup_retention_period=resource_data.get("BackupRetentionPeriod", 0),
-            preferred_backup_window=resource_data.get("PreferredBackupWindow", ""),
-            preferred_maintenance_window=resource_data.get(
-                "PreferredMaintenanceWindow", ""
+            allocated_storage=int(resource_data.get("AllocatedStorage", 0)),
+            max_allocated_storage=int(resource_data.get("MaxAllocatedStorage", 0)),
+            storage_encrypted=bool(resource_data.get("StorageEncrypted", False)),
+            backup_retention_period=int(resource_data.get("BackupRetentionPeriod", 0)),
+            preferred_backup_window=str(resource_data.get("PreferredBackupWindow", "")),
+            preferred_maintenance_window=str(
+                resource_data.get("PreferredMaintenanceWindow", "")
             ),
-            auto_minor_version_upgrade=resource_data.get(
-                "AutoMinorVersionUpgrade", False
+            auto_minor_version_upgrade=bool(
+                resource_data.get("AutoMinorVersionUpgrade", False)
             ),
-            deletion_protection=resource_data.get("DeletionProtection", False),
-            performance_insights_enabled=resource_data.get(
-                "PerformanceInsightsEnabled", False
+            deletion_protection=bool(resource_data.get("DeletionProtection", False)),
+            performance_insights_enabled=bool(
+                resource_data.get("PerformanceInsightsEnabled", False)
             ),
-            monitoring_interval=resource_data.get("MonitoringInterval", 0),
-            enhanced_monitoring_resource_arn=resource_data.get(
-                "EnhancedMonitoringResourceArn", ""
+            monitoring_interval=int(resource_data.get("MonitoringInterval", 0)),
+            enhanced_monitoring_resource_arn=str(
+                resource_data.get("EnhancedMonitoringResourceArn", "")
             ),
-            license_model=resource_data.get("LicenseModel", ""),
+            license_model=str(resource_data.get("LicenseModel", "")),
             tags=tags,
             check_type=self.check_type,
         )

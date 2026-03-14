@@ -40,7 +40,7 @@ def test_scanner_lifecycle_extraction_active():
 
 def test_scanner_replication_extraction_empty(mocker):
     mock_client = mocker.Mock()
-    mock_client.calculate_replication_cost_impact.return_value = "None"
+    mock_client.calculate_replication_cost_impact.return_value = []
 
     scanner = S3InventoryScanner()
     scanner.client = mock_client
@@ -73,7 +73,7 @@ def test_scanner_replication_extraction_active(mocker):
     assert info["replication_status"] == "Enabled"
     assert info["replication_destination"] == "arn:aws:s3:::dest"
     assert info["replication_kms_encrypted"] is True
-    assert info["replication_cost_impact"] == ["Cross-Region"]
+    assert info["replication_cost_impact"] == "Cross-Region"
 
 
 def test_scanner_analyze_resource(mocker):

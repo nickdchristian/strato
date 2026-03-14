@@ -46,5 +46,7 @@ def test_reserved_scan_requires_format(mock_run_scan):
     result = invoke_scan_command([])
 
     assert result.exit_code == 1
-    assert "RI data requires structured output" in (result.stderr + result.stdout)
+    assert "Inventory data is too wide for table output" in (
+        result.stderr + result.stdout
+    )
     mock_run_scan.assert_not_called()

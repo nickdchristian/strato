@@ -23,17 +23,40 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
+            client_instance = args[0] if args else None
+            acc = getattr(client_instance, "account_id", "Unknown")
+
+            context = (
+                kwargs.get("InstanceId")
+                or kwargs.get("instance_id")
+                or kwargs.get("VolumeId")
+                or kwargs.get("volume_id")
+                or kwargs.get("ImageId")
+                or kwargs.get("image_id")
+                or (args[1] if len(args) > 1 else "")
+            )
+
+            func_name = getattr(func, "__name__", "unknown_callable")
+            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
+
+            logger.debug(f"{prefix} {func_name}")
+
             try:
                 return func(*args, **kwargs)
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
+
                 if error_code in safe_error_codes:
+                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
                     return cast(T, default)
 
                 if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(f"AWS Error in {func.__name__}: {error_code}")
+                    logger.warning(
+                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
+                    )
                 return cast(T, default)
-            except Exception:
+            except Exception as e:
+                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
                 return cast(T, default)
 
         return wrapper
@@ -42,34 +65,33 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
 
 
 class EC2Client:
-    """
-    Wrapper for Boto3 EC2, CloudWatch, and SSM interactions.
-    """
-
-    def __init__(self, session: boto3.Session | None = None):
+    def __init__(
+        self, session: boto3.Session | None = None, account_id: str = "Unknown"
+    ):
         self.retry_config = Config(retries={"mode": "adaptive", "max_attempts": 10})
         self.session = session or boto3.Session()
+        self.account_id = account_id
         self._client = self.session.client("ec2", config=self.retry_config)
         self._cw_client = self.session.client("cloudwatch", config=self.retry_config)
         self._ssm_client = self.session.client("ssm", config=self.retry_config)
         self._optimizer_enrolled = None
 
     def list_instances(self) -> list[dict[str, Any]]:
-        """
-        Pages through all EC2 instances in the region.
-        """
+        logger.debug(f"[{self.account_id}] Paginating through all EC2 instances...")
         paginator = self._client.get_paginator("describe_instances")
         instances = []
         for page in paginator.paginate():
             for reservation in page.get("Reservations", []):
                 instances.extend(reservation.get("Instances", []))
+        logger.debug(
+            f"[{self.account_id}] Successfully retrieved "
+            f"{len(instances)} EC2 instances."
+        )
         return instances
 
     @safe_aws_call(default=[])
     def get_reserved_instances(self) -> list[dict[str, Any]]:
-        """
-        Retrieves active Reserved Instances.
-        """
+        logger.debug(f"[{self.account_id}] Fetching active EC2 Reserved Instances...")
         response = self._client.describe_reserved_instances(
             Filters=[{"Name": "state", "Values": ["active", "retired"]}]
         )
@@ -173,6 +195,9 @@ class EC2Client:
         if self._optimizer_enrolled is not None:
             return self._optimizer_enrolled
 
+        logger.debug(
+            f"[{self.account_id}] Checking AWS Compute Optimizer enrollment status..."
+        )
         try:
             opt_client = self.session.client(
                 "compute-optimizer", config=self.retry_config
@@ -244,6 +269,10 @@ class EC2Client:
         dimension_value: str,
         days: int,
     ) -> float | None:
+        logger.debug(
+            f"[{self.account_id}][{dimension_value}] "
+            f"Fetching {namespace} metric '{metric_name}' (Max)"
+        )
         try:
             response = self._cw_client.get_metric_statistics(
                 Namespace=namespace,
@@ -267,6 +296,10 @@ class EC2Client:
         dimension_value: str,
         days: int,
     ) -> float | None:
+        logger.debug(
+            f"[{self.account_id}][{dimension_value}] "
+            f"Fetching {namespace} metric '{metric_name}' (Avg)"
+        )
         try:
             response = self._cw_client.get_metric_statistics(
                 Namespace=namespace,

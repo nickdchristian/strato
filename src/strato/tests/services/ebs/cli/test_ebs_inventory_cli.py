@@ -21,6 +21,7 @@ def test_scan_missing_output_flags():
 def test_scan_with_json_and_region(mocker):
     """Test a successful invocation with --json and --region flags."""
     mock_run_scan = mocker.patch("strato.services.ebs.cli.inventory.run_scan")
+    mock_run_scan.return_value = 0
 
     result = runner.invoke(app, ["--json", "--region", "us-west-2"])
 
@@ -41,6 +42,7 @@ def test_scan_with_json_and_region(mocker):
 def test_scan_with_csv_verbose_and_role(mocker):
     """Test a successful invocation with --csv, verbose, and an assumed role."""
     mock_run_scan = mocker.patch("strato.services.ebs.cli.inventory.run_scan")
+    mock_run_scan.return_value = 0
 
     result = runner.invoke(
         app, ["--csv", "--verbose", "--org-role", "arn:aws:iam::123:role/audit"]

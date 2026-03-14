@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -8,6 +9,7 @@ from typing import Any, TypeVar
 import boto3
 from rich.console import Console
 
+logger = logging.getLogger(__name__)
 console_err = Console(stderr=True)
 
 
@@ -103,11 +105,20 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
         Uses console_err for status to avoid polluting stdout.
         """
         results = []
-        resource_stream = self.fetch_resources()
+
+        logger.debug(f"[{self.account_id}] Initiating {self.service_name} scan...")
+
+        # We wrap fetch_resources in a list to count them for reassuring logging,
+        # assuming AWS resource counts per region/account fit in memory.
+        resources = list(self.fetch_resources())
+        logger.debug(
+            f"[{self.account_id}] Fetched {len(resources)} {self.service_name}"
+            f" resources to analyze."
+        )
 
         def process_stream():
             with ThreadPoolExecutor(max_workers=20) as executor:
-                results.extend(executor.map(self.analyze_resource, resource_stream))
+                results.extend(executor.map(self.analyze_resource, resources))
 
         if silent:
             process_stream()
@@ -117,5 +128,10 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
                 spinner="dots",
             ):
                 process_stream()
+
+        logger.debug(
+            f"[{self.account_id}] Successfully analyzed"
+            f" {len(results)} {self.service_name} resources."
+        )
 
         return results

@@ -20,16 +20,38 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
+            client_instance = args[0] if args else None
+            acc = getattr(client_instance, "account_id", "Unknown")
+
+            context = (
+                kwargs.get("VolumeId")
+                or kwargs.get("volume_id")
+                or kwargs.get("SnapshotId")
+                or kwargs.get("snapshot_id")
+                or (args[1] if len(args) > 1 else "")
+            )
+
+            func_name = getattr(func, "__name__", "unknown_callable")
+            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
+
+            logger.debug(f"{prefix} {func_name}")
+
             try:
                 return func(*args, **kwargs)
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
+
                 if error_code in safe_error_codes:
+                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
                     return cast(T, default)
+
                 if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(f"AWS Error in {func.__name__}: {error_code}")
+                    logger.warning(
+                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
+                    )
                 return cast(T, default)
-            except Exception:
+            except Exception as e:
+                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
                 return cast(T, default)
 
         return wrapper
@@ -38,35 +60,51 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
 
 
 class EBSClient:
-    def __init__(self, session: boto3.Session | None = None):
+    def __init__(
+        self, session: boto3.Session | None = None, account_id: str = "Unknown"
+    ):
         self.retry_config = Config(retries={"mode": "adaptive", "max_attempts": 10})
         self.session = session or boto3.Session()
+        self.account_id = account_id
         self._client = self.session.client("ec2", config=self.retry_config)
         self._cw_client = self.session.client("cloudwatch", config=self.retry_config)
         self._kms_client = self.session.client("kms", config=self.retry_config)
         self._optimizer_enrolled = None
 
     def list_volumes(self) -> list[dict[str, Any]]:
+        logger.debug(f"[{self.account_id}] Paginating through all EBS volumes...")
         paginator = self._client.get_paginator("describe_volumes")
         volumes = []
         for page in paginator.paginate():
             volumes.extend(page.get("Volumes", []))
+        logger.debug(
+            f"[{self.account_id}] Successfully retrieved {len(volumes)} EBS volumes."
+        )
         return volumes
 
     @safe_aws_call(default={})
     def get_all_snapshots(self) -> dict[str, list[dict]]:
-        """Fetch all snapshots once to avoid per-volume API calls."""
+        logger.debug(
+            f"[{self.account_id}] Fetching all owned EBS snapshots to map to volumes..."
+        )
         paginator = self._client.get_paginator("describe_snapshots")
         snapshot_map = {}
         for page in paginator.paginate(OwnerIds=["self"]):
             for snap in page.get("Snapshots", []):
                 vol_id = snap["VolumeId"]
                 snapshot_map.setdefault(vol_id, []).append(snap)
+        logger.debug(
+            f"[{self.account_id}] Mapped snapshots to "
+            f"{len(snapshot_map)} unique volumes."
+        )
         return snapshot_map
 
     @safe_aws_call(default={})
     def get_instance_states(self) -> dict[str, str]:
-        """Map InstanceId to State for attachment context."""
+        logger.debug(
+            f"[{self.account_id}] Fetching EC2 instance states "
+            f"for volume attachment context..."
+        )
         paginator = self._client.get_paginator("describe_instances")
         instance_map = {}
         for page in paginator.paginate():
@@ -92,6 +130,10 @@ class EBSClient:
     def check_optimizer_enrollment(self) -> str:
         if self._optimizer_enrolled is not None:
             return self._optimizer_enrolled
+
+        logger.debug(
+            f"[{self.account_id}] Checking AWS Compute Optimizer enrollment status..."
+        )
         try:
             opt_client = self.session.client(
                 "compute-optimizer", config=self.retry_config
@@ -106,7 +148,16 @@ class EBSClient:
     @safe_aws_call(default={})
     def get_volume_recommendations(self, volume_arns: list[str]) -> dict[str, dict]:
         if not volume_arns or self.check_optimizer_enrollment() != "Active":
+            logger.debug(
+                f"[{self.account_id}] Compute Optimizer disabled or no ARNs provided. "
+                "Skipping recommendations."
+            )
             return {}
+
+        logger.debug(
+            f"[{self.account_id}] Fetching Compute Optimizer recommendations "
+            f"for {len(volume_arns)} volumes"
+        )
         opt_client = self.session.client("compute-optimizer", config=self.retry_config)
         results = {}
 
@@ -140,13 +191,17 @@ class EBSClient:
 
     def _get_metric_avg(
         self,
-        namespace,
-        metric_name,
-        dimension_name,
-        dimension_value,
-        start_time,
-        end_time,
+        namespace: str,
+        metric_name: str,
+        dimension_name: str,
+        dimension_value: str,
+        start_time: datetime,
+        end_time: datetime,
     ) -> float | None:
+        logger.debug(
+            f"[{self.account_id}][{dimension_value}]"
+            f" Fetching CloudWatch metric '{metric_name}'"
+        )
         try:
             response = self._cw_client.get_metric_statistics(
                 Namespace=namespace,

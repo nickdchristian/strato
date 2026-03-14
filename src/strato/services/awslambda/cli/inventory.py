@@ -4,7 +4,7 @@ from rich.console import Console
 from strato.core.runner import run_scan
 from strato.services.awslambda.domains.inventory.checks import (
     LambdaInventoryScanner,
-    LambdaScanType,
+    LambdaInventoryScanType,
 )
 from strato.services.awslambda.domains.inventory.views import LambdaInventoryView
 
@@ -12,7 +12,9 @@ app = typer.Typer(help="Lambda Inventory & Audit")
 console_err = Console(stderr=True)
 
 
-def create_scan_command(target_scan_type: LambdaScanType, command_help_text: str):
+def create_scan_command(
+    target_scan_type: LambdaInventoryScanType, command_help_text: str
+):
     def command(
         verbose: bool = False,
         json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
@@ -56,14 +58,14 @@ def create_scan_command(target_scan_type: LambdaScanType, command_help_text: str
 
 
 HELP_TEXT_MAP = {
-    LambdaScanType.INVENTORY: "Gather a comprehensive inventory of Lambda Functions",
+    LambdaInventoryScanType.INVENTORY: "Gather a inventory of Lambda Functions",
 }
 
 CMD_NAME_MAP = {
-    LambdaScanType.INVENTORY: "scan",
+    LambdaInventoryScanType.INVENTORY: "scan",
 }
 
-for scan_type in LambdaScanType:
+for scan_type in LambdaInventoryScanType:
     default_name = scan_type.value.replace("_", "-").lower()
     cmd_name = CMD_NAME_MAP.get(scan_type, default_name)
 

@@ -1,11 +1,12 @@
-from typing import Any
+from typing import Any, cast
 
+from strato.core.models import AuditResult
 from strato.services.ec2.domains.reserved.checks import EC2ReservedInstanceResult
 
 
 class EC2ReservedInstanceView:
     @classmethod
-    def get_headers(cls, check_type: str = None) -> list[str]:
+    def get_headers(cls, check_type: str | None = None) -> list[str]:
         return [
             "account_id",
             "region",
@@ -31,36 +32,39 @@ class EC2ReservedInstanceView:
         ]
 
     @classmethod
-    def format_row(cls, result: EC2ReservedInstanceResult) -> list[str]:
+    def format_row(cls, result: AuditResult) -> list[str]:
+        ri_result = cast(EC2ReservedInstanceResult, result)
+
         def fmt(val: Any) -> str:
             return str(val) if val is not None else ""
 
-        # Convert term seconds to days for readability
-        term_days = result.term_seconds // 86400
-
-        # Flatten tags dict for CSV/Table display
-        tags_str = "; ".join([f"{k}={v}" for k, v in result.tags.items()])
+        term_days = ri_result.term_seconds // 86400
+        tags_str = "; ".join([f"{k}={v}" for k, v in ri_result.tags.items()])
 
         return [
-            result.account_id,
-            result.region,
-            result.ri_id,
-            result.instance_type,
-            result.scope,
-            result.availability_zone,
-            fmt(result.instance_count),
-            result.start,
-            result.expires,
+            ri_result.account_id,
+            ri_result.region,
+            ri_result.ri_id,
+            ri_result.instance_type,
+            ri_result.scope,
+            ri_result.availability_zone,
+            fmt(ri_result.instance_count),
+            ri_result.start,
+            ri_result.expires,
             fmt(term_days),
-            result.payment_options,
-            result.offering_class,
-            fmt(result.upfront_price),
-            fmt(result.usage_price),
-            result.recurring_charges,
-            result.currency_code,
-            result.platform,
-            result.tenancy,
-            result.state,
-            fmt(result.remaining_days),
+            ri_result.payment_options,
+            ri_result.offering_class,
+            fmt(ri_result.upfront_price),
+            fmt(ri_result.usage_price),
+            ri_result.recurring_charges,
+            ri_result.currency_code,
+            ri_result.platform,
+            ri_result.tenancy,
+            ri_result.state,
+            fmt(ri_result.remaining_days),
             tags_str,
         ]
+
+    @classmethod
+    def format_csv_row(cls, result: AuditResult) -> list[str]:
+        return cls.format_row(result)

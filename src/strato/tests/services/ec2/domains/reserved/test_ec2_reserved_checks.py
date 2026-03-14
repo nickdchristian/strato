@@ -27,7 +27,8 @@ def test_result_serialization():
 def test_scanner_analyze_resource(mocker):
     mocker.patch("strato.services.ec2.domains.reserved.checks.EC2Client")
     scanner = EC2ReservedInstanceScanner(account_id="123")
-    scanner.client.session.region_name = "us-east-1"
+    scanner.session = mocker.Mock()
+    scanner.session.region_name = "us-east-1"
 
     start_time = datetime.now(UTC) - timedelta(days=100)
     end_time = datetime.now(UTC) + timedelta(days=265)
@@ -60,6 +61,10 @@ def test_scanner_analyze_resource(mocker):
 def test_scanner_analyze_resource_empty_fields(mocker):
     mocker.patch("strato.services.ec2.domains.reserved.checks.EC2Client")
     scanner = EC2ReservedInstanceScanner(account_id="123")
+
+    mock_session = mocker.Mock()
+    mock_session.region_name = "us-east-1"
+    scanner.session = mock_session
 
     ri_data = {
         "ReservedInstancesId": "ri-empty",

@@ -1,11 +1,16 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, cast
+
+import boto3
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.ec2.client import EC2Client
+
+logger = logging.getLogger(__name__)
 
 
 class EC2ReservedScanType(StrEnum):
@@ -40,7 +45,6 @@ class EC2ReservedInstanceResult(AuditResult):
     remaining_days: int = 0
     tags: dict[str, str] = field(default_factory=dict)
 
-    # Required generic fields
     resource_arn: str = ""
     resource_id: str = ""
     resource_name: str = ""
@@ -49,36 +53,42 @@ class EC2ReservedInstanceResult(AuditResult):
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        keys_to_remove = ["findings", "status_score", "status_score_reason"]
+        keys_to_remove = ["findings", "status_score", "status"]
         for key in keys_to_remove:
             data.pop(key, None)
         return data
 
 
 class EC2ReservedInstanceScanner(BaseScanner[EC2ReservedInstanceResult]):
-    def __init__(
-        self,
-        check_type: str = EC2ReservedScanType.RESERVED_INSTANCES,
-        session=None,
-        account_id="Unknown",
-    ):
-        super().__init__(check_type, session, account_id)
-        self.client = EC2Client(session=self.session)
-
     @property
     def service_name(self) -> str:
         return "EC2 Reserved Instances"
 
-    def fetch_resources(self) -> Iterable[dict]:
-        yield from self.client.get_reserved_instances()
+    def __init__(
+        self,
+        check_type: str = EC2ReservedScanType.RESERVED_INSTANCES,
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
+    ):
+        super().__init__(check_type, session, account_id)
+        self.client = EC2Client(session=self.session, account_id=self.account_id)
 
-    def analyze_resource(self, ri_data: dict) -> EC2ReservedInstanceResult:
-        start_date = ri_data.get("Start")
+    def fetch_resources(self) -> Iterable[dict[str, Any]]:
+        return self.client.get_reserved_instances()
+
+    def analyze_resource(self, resource: Any) -> EC2ReservedInstanceResult:
+        ri_data = cast(dict[str, Any], resource)
+        ri_id = str(ri_data.get("ReservedInstancesId", ""))
+        logger.debug(
+            f"[{self.account_id}][{ri_id}] Analyzing RI contract state and duration..."
+        )
+
         remaining_days = 0
+        start_date = ri_data.get("Start")
         end_date = ri_data.get("End")
 
-        if start_date:
-            duration = ri_data.get("Duration", 0)
+        if isinstance(start_date, datetime):
+            duration = int(ri_data.get("Duration", 0))
             elapsed = (datetime.now(UTC) - start_date).days
             remaining_days = max(0, duration // 86400 - elapsed)
 
@@ -91,34 +101,36 @@ class EC2ReservedInstanceScanner(BaseScanner[EC2ReservedInstanceResult]):
         )
 
         tags_list = ri_data.get("Tags", [])
-        tags_dict = {t.get("Key"): t.get("Value") for t in tags_list}
+        tags_dict = {str(t.get("Key", "")): str(t.get("Value", "")) for t in tags_list}
 
-        ri_id = ri_data.get("ReservedInstancesId", "")
+        region = str(self.client.session.region_name or "Unknown")
+
+        logger.debug(f"[{self.account_id}][{ri_id}] Analysis complete.")
 
         return EC2ReservedInstanceResult(
             account_id=self.account_id,
-            region=self.client.session.region_name,
+            region=region,
             ri_id=ri_id,
-            instance_type=ri_data.get("InstanceType", ""),
-            scope=ri_data.get("Scope", ""),
-            availability_zone=ri_data.get("AvailabilityZone", "Region"),
-            instance_count=ri_data.get("InstanceCount", 0),
-            start=start_date.isoformat() if start_date else "",
-            expires=end_date.isoformat() if end_date else "",
-            term_seconds=ri_data.get("Duration", 0),
-            payment_options=ri_data.get("OfferingType", ""),
-            offering_class=ri_data.get("OfferingClass", ""),
-            upfront_price=ri_data.get("FixedPrice", 0.0),
-            usage_price=ri_data.get("UsagePrice", 0.0),
-            currency_code=ri_data.get("CurrencyCode", ""),
+            instance_type=str(ri_data.get("InstanceType", "")),
+            scope=str(ri_data.get("Scope", "")),
+            availability_zone=str(ri_data.get("AvailabilityZone", "Region")),
+            instance_count=int(ri_data.get("InstanceCount", 0)),
+            start=start_date.isoformat() if isinstance(start_date, datetime) else "",
+            expires=end_date.isoformat() if isinstance(end_date, datetime) else "",
+            term_seconds=int(ri_data.get("Duration", 0)),
+            payment_options=str(ri_data.get("OfferingType", "")),
+            offering_class=str(ri_data.get("OfferingClass", "")),
+            upfront_price=float(ri_data.get("FixedPrice", 0.0)),
+            usage_price=float(ri_data.get("UsagePrice", 0.0)),
+            currency_code=str(ri_data.get("CurrencyCode", "")),
             recurring_charges=charges_str,
-            platform=ri_data.get("ProductDescription", ""),
-            tenancy=ri_data.get("InstanceTenancy", ""),
-            state=ri_data.get("State", ""),
+            platform=str(ri_data.get("ProductDescription", "")),
+            tenancy=str(ri_data.get("InstanceTenancy", "")),
+            state=str(ri_data.get("State", "")),
             remaining_days=int(remaining_days),
             tags=tags_dict,
             resource_id=ri_id,
             resource_name=ri_id,
-            resource_arn=f"arn:aws:ec2:{self.client.session.region_name}:{self.account_id}:reserved-instances/{ri_id}",
+            resource_arn=f"arn:aws:ec2:{region}:{self.account_id}:reserved-instances/{ri_id}",
             check_type=self.check_type,
         )

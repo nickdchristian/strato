@@ -1,7 +1,11 @@
+from typing import Any, cast
+
+from strato.core.models import AuditResult
+from strato.core.presenter import GenericView
 from strato.services.s3.domains.inventory.checks import S3InventoryResult
 
 
-class S3InventoryView:
+class S3InventoryView(GenericView):
     @classmethod
     def get_headers(cls, check_type: str = "INVENTORY") -> list[str]:
         return cls.get_csv_headers(check_type)
@@ -50,54 +54,62 @@ class S3InventoryView:
         ]
 
     @classmethod
-    def format_row(cls, result: S3InventoryResult) -> list[str]:
+    def format_row(cls, result: AuditResult) -> list[str]:
         return cls.format_csv_row(result)
 
     @classmethod
-    def format_csv_row(cls, result: S3InventoryResult) -> list[str]:
-        tags_string = "; ".join(f"{key}={value}" for key, value in result.tags.items())
-
-        creation_string = (
-            result.creation_date.isoformat() if result.creation_date else ""
+    def format_csv_row(cls, result: AuditResult) -> list[str]:
+        s3_result = cast(S3InventoryResult, result)
+        tags_string = "; ".join(
+            f"{key}={value}" for key, value in s3_result.tags.items()
         )
 
+        creation_string = (
+            s3_result.creation_date.isoformat() if s3_result.creation_date else ""
+        )
+
+        def fmt(val: Any) -> str:
+            if val is None:
+                return ""
+            return str(val)
+
         return [
-            result.account_id,
-            result.region,
-            result.resource_name,
+            s3_result.account_id,
+            s3_result.region,
+            s3_result.resource_name,
             creation_string,
-            result.encryption_type,
-            result.kms_master_key_id,
-            str(result.bucket_key_enabled),
-            result.versioning_status,
-            result.mfa_delete,
-            str(result.block_all_public_access),
-            str(result.has_bucket_policy),
-            result.bucket_ownership,
-            result.server_access_logging,
-            result.static_website_hosting,
-            result.transfer_acceleration,
-            result.intelligent_tiering_config,
-            result.object_lock,
-            result.object_lock_mode,
-            result.object_lock_retention,
-            result.replication_status,
-            result.replication_destination,
-            result.replication_cost_impact,
-            result.lifecycle_status,
-            str(result.lifecycle_rule_count),
-            str(result.total_bucket_size_gb),
-            str(result.total_object_count),
-            str(result.all_requests_count),
-            str(result.get_requests_count),
-            str(result.put_requests_count),
-            str(result.standard_size_gb),
-            str(result.standard_ia_size_gb),
-            str(result.intelligent_tiering_size_gb),
-            str(result.glacier_size_gb),
-            str(result.deep_archive_size_gb),
-            str(result.rrs_size_gb),
-            str(result.glacier_object_count),
-            str(result.deep_archive_object_count),
+            fmt(s3_result.encryption_type),
+            fmt(s3_result.kms_master_key_id),
+            str(s3_result.bucket_key_enabled),
+            s3_result.versioning_status,
+            s3_result.mfa_delete,
+            str(s3_result.block_all_public_access),
+            str(s3_result.has_bucket_policy),
+            fmt(s3_result.bucket_ownership),
+            fmt(s3_result.server_access_logging),
+            s3_result.static_website_hosting,
+            s3_result.transfer_acceleration,
+            s3_result.intelligent_tiering_config,
+            s3_result.object_lock,
+            fmt(s3_result.object_lock_mode),
+            fmt(s3_result.object_lock_retention),
+            s3_result.replication_status,
+            fmt(s3_result.replication_destination),
+            fmt(s3_result.replication_cost_impact),
+            s3_result.lifecycle_status,
+            str(s3_result.lifecycle_rule_count),
+            str(s3_result.total_bucket_size_gb),
+            str(s3_result.total_object_count),
+            str(s3_result.all_requests_count),
+            str(s3_result.get_requests_count),
+            str(s3_result.put_requests_count),
+            str(s3_result.standard_size_gb),
+            str(s3_result.standard_ia_size_gb),
+            str(s3_result.intelligent_tiering_size_gb),
+            str(s3_result.glacier_size_gb),
+            str(s3_result.deep_archive_size_gb),
+            str(s3_result.rrs_size_gb),
+            str(s3_result.glacier_object_count),
+            str(s3_result.deep_archive_object_count),
             tags_string,
         ]
