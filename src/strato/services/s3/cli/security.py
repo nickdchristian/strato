@@ -5,6 +5,7 @@ from strato.services.s3.domains.security.checks import (
     S3SecurityScanner,
     S3SecurityScanType,
 )
+from strato.services.s3.domains.security.rules import S3SecurityEvaluator
 from strato.services.s3.domains.security.views import S3SecurityView
 
 app = typer.Typer(help="S3 Security Audits")
@@ -35,6 +36,7 @@ def create_scan_command(target_scan_type: S3SecurityScanType, command_help_text:
             failures_only=failures_only,
             org_role=org_role,
             view_class=S3SecurityView,
+            evaluator_cls=S3SecurityEvaluator,
         )
 
         if scan_code != 0:
