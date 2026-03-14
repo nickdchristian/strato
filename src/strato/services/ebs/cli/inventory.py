@@ -17,14 +17,14 @@ def scan(
     verbose: bool = False,
     json_output: bool = typer.Option(False, "--json"),
     csv_output: bool = typer.Option(False, "--csv"),
-    region: str = typer.Option(None, "--region"),
-    org_role: str = typer.Option(None, "--org-role"),
+    region: str | None = typer.Option(None, "--region"),
+    org_role: str | None = typer.Option(None, "--org-role"),
 ):
     if not (json_output or csv_output):
         console_err.print("[bold red]Error:[/bold red] Use --json or --csv")
         raise typer.Exit(1)
 
-    run_scan(
+    scan_code = run_scan(
         scanner_cls=EBSInventoryScanner,
         check_type=EBSInventoryScanType.VOLUMES,
         verbose=verbose,
@@ -35,3 +35,6 @@ def scan(
         view_class=EBSInventoryView,
         region=region,
     )
+
+    if scan_code != 0:
+        raise typer.Exit(scan_code)

@@ -1,9 +1,11 @@
-from typing import Any
+from typing import Any, cast
 
+from strato.core.models import AuditResult
+from strato.core.presenter import GenericView
 from strato.services.ecs.domains.inventory.checks import ECSInventoryResult
 
 
-class ECSInventoryView:
+class ECSInventoryView(GenericView):
     @classmethod
     def get_headers(cls, check_type: str = "INVENTORY") -> list[str]:
         return cls.get_csv_headers(check_type)
@@ -48,11 +50,13 @@ class ECSInventoryView:
         ]
 
     @classmethod
-    def format_row(cls, result: ECSInventoryResult) -> list[str]:
+    def format_row(cls, result: AuditResult) -> list[str]:
         return cls.format_csv_row(result)
 
     @classmethod
-    def format_csv_row(cls, result: ECSInventoryResult) -> list[str]:
+    def format_csv_row(cls, result: AuditResult) -> list[str]:
+        ecs_result = cast(ECSInventoryResult, result)
+
         def fmt(val: Any) -> str:
             if val is None:
                 return ""
@@ -61,38 +65,38 @@ class ECSInventoryView:
             return str(val)
 
         return [
-            fmt(result.cluster_name),
-            fmt(result.service_name),
-            fmt(result.account_id),
-            fmt(result.region),
-            fmt(result.vpc_id),
-            fmt(result.tags),
-            fmt(result.task_definition),
-            fmt(result.launch_type),
-            fmt(result.capacity_provider),
-            fmt(result.spot_usage_percentage),
-            fmt(result.cpu_allocated_vcpu),
-            fmt(result.memory_allocated_gb),
-            fmt(result.cpu_utilization_avg_30d),
-            fmt(result.cpu_utilization_peak_30d),
-            fmt(result.memory_utilization_avg_30d),
-            fmt(result.memory_utilization_peak_30d),
-            fmt(result.desired_tasks),
-            fmt(result.running_tasks),
-            fmt(result.task_restarts_30d),
-            fmt(result.last_deployment_days_ago),
-            fmt(result.total_cost_30d),
-            fmt(result.rightsizing_recommendation),
-            fmt(result.estimated_monthly_waste_usd),
-            fmt(result.fargate_savings_potential),
-            fmt(result.autoscaling_enabled),
-            fmt(result.scaling_events_30d),
-            fmt(result.load_balancer_name),
-            fmt(result.internet_facing),
-            fmt(result.security_findings_critical),
-            fmt(result.security_findings_high),
-            fmt(result.overly_permissive_iam_role),
-            fmt(result.encryption_enabled),
-            fmt(result.logging_enabled),
-            fmt(result.health_check_grace_period_seconds),
+            fmt(ecs_result.cluster_name),
+            fmt(ecs_result.service_name),
+            fmt(ecs_result.account_id),
+            fmt(ecs_result.region),
+            fmt(ecs_result.vpc_id),
+            fmt(ecs_result.tags),
+            fmt(ecs_result.task_definition),
+            fmt(ecs_result.launch_type),
+            fmt(ecs_result.capacity_provider),
+            fmt(ecs_result.spot_usage_percentage),
+            fmt(ecs_result.cpu_allocated_vcpu),
+            fmt(ecs_result.memory_allocated_gb),
+            fmt(ecs_result.cpu_utilization_avg_30d),
+            fmt(ecs_result.cpu_utilization_peak_30d),
+            fmt(ecs_result.memory_utilization_avg_30d),
+            fmt(ecs_result.memory_utilization_peak_30d),
+            fmt(ecs_result.desired_tasks),
+            fmt(ecs_result.running_tasks),
+            fmt(ecs_result.task_restarts_30d),
+            fmt(ecs_result.last_deployment_days_ago),
+            fmt(ecs_result.total_cost_30d),
+            fmt(ecs_result.rightsizing_recommendation),
+            fmt(ecs_result.estimated_monthly_waste_usd),
+            fmt(ecs_result.fargate_savings_potential),
+            fmt(ecs_result.autoscaling_enabled),
+            fmt(ecs_result.scaling_events_30d),
+            fmt(ecs_result.load_balancer_name),
+            fmt(ecs_result.internet_facing),
+            fmt(ecs_result.security_findings_critical),
+            fmt(ecs_result.security_findings_high),
+            fmt(ecs_result.overly_permissive_iam_role),
+            fmt(ecs_result.encryption_enabled),
+            fmt(ecs_result.logging_enabled),
+            fmt(ecs_result.health_check_grace_period_seconds),
         ]

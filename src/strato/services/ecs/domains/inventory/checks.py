@@ -1,11 +1,16 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum, auto
-from typing import Any
+from typing import Any, cast
+
+import boto3
 
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.ecs.client import ECSClient
+
+logger = logging.getLogger(__name__)
 
 
 class ECSInventoryScanType(StrEnum):
@@ -25,7 +30,7 @@ class ECSInventoryResult(AuditResult):
     account_id: str = "Unknown"
     region: str = ""
     vpc_id: str | None = None
-    tags: dict = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
 
     task_definition: str = ""
     launch_type: str = "UNKNOWN"
@@ -71,20 +76,22 @@ class ECSInventoryResult(AuditResult):
 
 
 class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
+    is_global_service = False
+
     def __init__(
         self,
         check_type: str = ECSInventoryScanType.ALL,
-        session=None,
-        account_id="Unknown",
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
     ):
         super().__init__(check_type, session, account_id)
-        self.client = ECSClient(session=self.session)
+        self.client = ECSClient(session=self.session, account_id=account_id)
 
     @property
     def service_name(self) -> str:
         return f"ECS Inventory ({self.check_type})"
 
-    def fetch_resources(self) -> Iterable[dict]:
+    def fetch_resources(self) -> Iterable[dict[str, Any]]:
         clusters = self.client.list_clusters()
         for cluster_arn in clusters:
             services = self.client.list_services(cluster_arn)
@@ -94,29 +101,31 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
                     svc["_ClusterArn"] = cluster_arn
                     yield svc
 
-    def analyze_resource(self, resource: dict) -> ECSInventoryResult:
-        """
-        Compiles the ECS Service/Cluster data.
-        Parameter name 'resource' matches BaseScanner exactly to satisfy type checkers.
-        """
-        cluster_arn = resource.get("_ClusterArn", "")
-        cluster_name = cluster_arn.split("/")[-1]
+    def analyze_resource(self, resource: Any) -> ECSInventoryResult:
+        res_dict = cast(dict[str, Any], resource)
+        cluster_arn = str(res_dict.get("_ClusterArn", ""))
+        cluster_name = cluster_arn.split("/")[-1] if cluster_arn else "Unknown"
 
-        service_arn = resource.get("serviceArn", "")
-        service_name = resource.get("serviceName", "")
+        service_arn = str(res_dict.get("serviceArn", ""))
+        service_name = str(res_dict.get("serviceName", ""))
         service_id = service_arn.split("/")[-1] if service_arn else service_name
 
-        raw_tags = resource.get("tags", [])
-        tags_dict = {t["key"]: t["value"] for t in raw_tags} if raw_tags else {}
+        logger.debug(
+            f"[{self.account_id}][{cluster_name} | {service_name}] Starting analysis..."
+        )
+        raw_tags = res_dict.get("tags", [])
+        tags_dict = (
+            {str(t["key"]): str(t["value"]) for t in raw_tags} if raw_tags else {}
+        )
 
-        lb_data = resource.get("loadBalancers", [])
+        lb_data = res_dict.get("loadBalancers", [])
         lb_names = [
-            lb.get("targetGroupArn", "").split("/")[-2]
+            str(lb.get("targetGroupArn", "").split("/")[-2])
             for lb in lb_data
             if "targetGroupArn" in lb
         ]
 
-        task_def_arn = resource.get("taskDefinition", "")
+        task_def_arn = str(res_dict.get("taskDefinition", ""))
         task_def_details = self.client.describe_task_definition(task_def_arn)
 
         cpu_alloc = task_def_details.get("cpu")
@@ -128,18 +137,22 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
                 logging_enabled = True
                 break
 
-        deployments = resource.get("deployments", [])
+        deployments = res_dict.get("deployments", [])
         days_ago = None
         if deployments:
             latest_deploy = deployments[0].get("createdAt")
-            if latest_deploy:
+            if isinstance(latest_deploy, datetime):
                 days_ago = (datetime.now(UTC) - latest_deploy).days
 
-        # Capacity Providers
-        cp_strategy = resource.get("capacityProviderStrategy", [])
-        primary_cp = cp_strategy[0].get("capacityProvider") if cp_strategy else None
+        cp_strategy = res_dict.get("capacityProviderStrategy", [])
+        primary_cp = (
+            str(cp_strategy[0].get("capacityProvider", "")) if cp_strategy else None
+        )
 
-        # Metrics
+        logger.debug(
+            f"[{self.account_id}] [{cluster_name} | {service_name}] "
+            f"Fetching 30-day trailing metrics..."
+        )
         cpu_metrics = self.client.get_service_metric(
             cluster_name, service_name, "CPUUtilization"
         )
@@ -162,6 +175,16 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
         elif cpu_metrics["max"] > 85 or mem_metrics["max"] > 85:
             recommendation = "Overutilized (Scale Out / Upsize)"
 
+        region_fallback = str(self.session.region_name or "Unknown")
+        parsed_region = (
+            cluster_arn.split(":")[3]
+            if len(cluster_arn.split(":")) > 3
+            else region_fallback
+        )
+
+        logger.debug(
+            f"[{self.account_id}][{cluster_name} | {service_name}] Analysis complete."
+        )
         return ECSInventoryResult(
             resource_arn=service_arn,
             resource_id=service_id,
@@ -169,23 +192,23 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
             cluster_name=cluster_name,
             service_name=service_name,
             account_id=self.account_id,
-            region=cluster_arn.split(":")[3] if len(cluster_arn.split(":")) > 3 else "",
+            region=parsed_region,
             tags=tags_dict,
-            task_definition=task_def_arn.split("/")[-1],
-            launch_type=resource.get("launchType", "CAPACITY_PROVIDER"),
+            task_definition=task_def_arn.split("/")[-1] if task_def_arn else "Unknown",
+            launch_type=str(res_dict.get("launchType", "CAPACITY_PROVIDER")),
             capacity_provider=primary_cp,
-            cpu_allocated_vcpu=cpu_alloc,
-            memory_allocated_gb=mem_alloc,
+            cpu_allocated_vcpu=str(cpu_alloc) if cpu_alloc else None,
+            memory_allocated_gb=str(mem_alloc) if mem_alloc else None,
             cpu_utilization_avg_30d=cpu_metrics["avg"],
             cpu_utilization_peak_30d=cpu_metrics["max"],
             memory_utilization_avg_30d=mem_metrics["avg"],
             memory_utilization_peak_30d=mem_metrics["max"],
-            desired_tasks=resource.get("desiredCount", 0),
-            running_tasks=resource.get("runningCount", 0),
+            desired_tasks=int(res_dict.get("desiredCount", 0)),
+            running_tasks=int(res_dict.get("runningCount", 0)),
             last_deployment_days_ago=days_ago,
             rightsizing_recommendation=recommendation,
             load_balancer_name=";".join(lb_names) if lb_names else None,
-            health_check_grace_period_seconds=resource.get(
+            health_check_grace_period_seconds=res_dict.get(
                 "healthCheckGracePeriodSeconds"
             ),
             logging_enabled=logging_enabled,

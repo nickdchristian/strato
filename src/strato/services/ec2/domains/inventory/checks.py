@@ -1,11 +1,16 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
+import boto3
+
 from strato.core.models import AuditResult, BaseScanner
 from strato.services.ec2.client import EC2Client
+
+logger = logging.getLogger(__name__)
 
 
 class EC2InventoryScanType(StrEnum):
@@ -88,11 +93,11 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
     def __init__(
         self,
         check_type: str = EC2InventoryScanType.ALL,
-        session=None,
-        account_id="Unknown",
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
     ):
         super().__init__(check_type, session, account_id)
-        self.client = EC2Client(session=self.session)
+        self.client = EC2Client(session=self.session, account_id=self.account_id)
         self.optimizer_status = self.client.check_optimizer_enrollment()
 
     @property
@@ -102,16 +107,20 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
     def fetch_resources(self) -> Iterable[dict]:
         yield from self.client.list_instances()
 
-    def analyze_resource(self, instance_data: dict) -> EC2InventoryResult:
-        """
-        Compiles a comprehensive inventory of a single EC2 instance.
-        """
-        instance_id = instance_data["InstanceId"]
+    def analyze_resource(self, resource: Any) -> EC2InventoryResult:
+        instance_data = resource
+        instance_id = str(instance_data.get("InstanceId", ""))
+
         name_tag = next(
             (t["Value"] for t in instance_data.get("Tags", []) if t["Key"] == "Name"),
             instance_id,
         )
         tags = {t["Key"]: t["Value"] for t in instance_data.get("Tags", [])}
+
+        az = instance_data.get("Placement", {}).get("AvailabilityZone")
+        region = str(az[:-1] if az else (self.session.region_name or "Unknown"))
+
+        logger.debug(f"[{self.account_id}][{instance_id}] Starting analysis...")
 
         mappings = instance_data.get("BlockDeviceMappings", [])
         volume_ids = [m["Ebs"]["VolumeId"] for m in mappings if "Ebs" in m]
@@ -143,20 +152,19 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
         sg_ids = [sg["GroupId"] for sg in sgs]
         sg_rules = self.client.get_security_group_rules(sg_ids)
 
-        iam_profile = instance_data.get("IamInstanceProfile", {}).get("Arn")
-        if iam_profile:
-            iam_profile = iam_profile.split("/")[-1]
+        iam_profile_arn = instance_data.get("IamInstanceProfile", {}).get("Arn")
+        iam_profile = iam_profile_arn.split("/")[-1] if iam_profile_arn else None
+
+        logger.debug(f"[{self.account_id}][{instance_id}] Analysis complete.")
 
         return EC2InventoryResult(
             account_id=self.account_id,
             resource_id=instance_id,
             resource_name=name_tag,
-            region=instance_data.get("Placement", {}).get("AvailabilityZone")[:-1],
+            region=region,
             instance_type=instance_data.get("InstanceType"),
             state=instance_data.get("State", {}).get("Name"),
-            availability_zone=instance_data.get("Placement", {}).get(
-                "AvailabilityZone"
-            ),
+            availability_zone=az,
             private_ip=instance_data.get("PrivateIpAddress"),
             public_ip4=instance_data.get("PublicIpAddress"),
             launch_time=instance_data.get("LaunchTime"),
@@ -186,7 +194,9 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
             security_group_inbound_ports=sg_rules["Inbound"],
             security_group_outbound_ports=sg_rules["Outbound"],
             iam_instance_profile=iam_profile,
-            monitoring_enabled=instance_data.get("Monitoring", {}).get("State"),
+            monitoring_enabled=instance_data.get("Monitoring", {}).get(
+                "State", "basic"
+            ),
             termination_protection=self.client.get_termination_protection(instance_id),
             tags=tags,
             check_type=self.check_type,

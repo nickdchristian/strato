@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from typing import Any, TypeVar, cast
 
 import boto3
@@ -17,18 +18,45 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
         safe_error_codes = []
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
+            client_instance = args[0] if args else None
+            acc = getattr(client_instance, "account_id", "Unknown")
+
+            # Extract ECS-specific resource context
+            context = (
+                kwargs.get("cluster_arn")
+                or kwargs.get("task_def_arn")
+                or kwargs.get("cluster_name")
+                or kwargs.get("service_name")
+                or (args[1] if len(args) > 1 else "")
+            )
+
+            # Prevent massive log strings if a list of services is passed
+            if isinstance(context, list):
+                context = "Multiple-Services"
+
+            func_name = getattr(func, "__name__", "unknown_callable")
+            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
+
+            logger.debug(f"{prefix} {func_name}")
+
             try:
                 return func(*args, **kwargs)
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
+
                 if error_code in safe_error_codes:
+                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
                     return cast(T, default)
 
                 if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(f"AWS Error in {func.__name__}: {error_code}")
+                    logger.warning(
+                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
+                    )
                 return cast(T, default)
-            except Exception:
+            except Exception as e:
+                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
                 return cast(T, default)
 
         return wrapper
@@ -37,9 +65,12 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
 
 
 class ECSClient:
-    def __init__(self, session: boto3.Session | None = None):
+    def __init__(
+        self, session: boto3.Session | None = None, account_id: str = "Unknown"
+    ):
         self.retry_config = Config(retries={"mode": "adaptive", "max_attempts": 10})
         self.session = session or boto3.Session()
+        self.account_id = account_id
         self._client = self.session.client("ecs", config=self.retry_config)
         self._cw_client = self.session.client("cloudwatch", config=self.retry_config)
         self._app_autoscaling_client = self.session.client(
@@ -48,10 +79,14 @@ class ECSClient:
 
     @safe_aws_call(default=[])
     def list_clusters(self) -> list[str]:
+        logger.debug(
+            f"[{self.account_id}] Paginating through all ECS clusters in region..."
+        )
         paginator = self._client.get_paginator("list_clusters")
         clusters = []
         for page in paginator.paginate():
             clusters.extend(page.get("clusterArns", []))
+        logger.debug(f"[{self.account_id}] Retrieved {len(clusters)} ECS clusters.")
         return clusters
 
     @safe_aws_call(default=[])
@@ -88,8 +123,7 @@ class ECSClient:
     @safe_aws_call(default={"avg": 0.0, "max": 0.0})
     def get_service_metric(
         self, cluster_name: str, service_name: str, metric_name: str, days: int = 30
-    ) -> dict:
-        """Fetches CloudWatch metrics for a specific ECS Service."""
+    ) -> dict[str, float]:
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(days=days)
 

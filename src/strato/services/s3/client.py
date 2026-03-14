@@ -16,7 +16,7 @@ T = TypeVar("T")
 
 def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Callable:
     """
-    Decorator to standardize AWS ClientError handling.
+    Decorator to standardize AWS ClientError handling and inject hierarchical logging.
     """
     if safe_error_codes is None:
         safe_error_codes = []
@@ -24,25 +24,45 @@ def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Ca
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
+            client_instance = args[0] if args else None
+            acc = getattr(client_instance, "account_id", "Unknown")
+
+            context = (
+                kwargs.get("Bucket")
+                or kwargs.get("bucket_name")
+                or kwargs.get("FunctionName")
+                or kwargs.get("VolumeId")
+                or kwargs.get("InstanceId")
+                or kwargs.get("image_id")
+                or kwargs.get("cluster_arn")
+                or kwargs.get("task_def_arn")
+                or kwargs.get("db_identifier")
+                or (args[1] if len(args) > 1 else "")
+            )
+
+            func_name = getattr(func, "__name__", "unknown_callable")
+
+            # Clean prefix without arrows
+            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
+
+            logger.debug(f"{prefix} {func_name}")
+
             try:
                 return func(*args, **kwargs)
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code", "Unknown")
 
                 if error_code in safe_error_codes:
+                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
                     return cast(T, default)
 
-                resource = kwargs.get("Bucket", "unknown resource")
-                logger.warning(
-                    "AWS Error in %s for %s: %s - %s",
-                    func.__name__,
-                    resource,
-                    error_code,
-                    e,
-                )
+                if error_code not in ["AccessDeniedException", "InvalidParameter"]:
+                    logger.warning(
+                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
+                    )
                 return cast(T, default)
             except Exception as e:
-                logger.error("Unexpected error in %s: %s", func.__name__, e)
+                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
                 return cast(T, default)
 
         return wrapper
@@ -71,9 +91,12 @@ class S3Client:
         "RRS": "ReducedRedundancyStorage",
     }
 
-    def __init__(self, session: boto3.Session | None = None):
+    def __init__(
+        self, session: boto3.Session | None = None, account_id: str = "Unknown"
+    ):
         self.retry_config = Config(retries={"mode": "adaptive", "max_attempts": 10})
         self.session = session or boto3.Session()
+        self.account_id = account_id
         self._client = self.session.client("s3", config=self.retry_config)
         self._region_cache: dict[str, str] = {}
 
@@ -87,20 +110,23 @@ class S3Client:
         )
 
     def list_buckets(self) -> list[dict[str, Any]]:
+        logger.debug(f"[{self.account_id}] Fetching all S3 buckets...")
         try:
             paginator = self._client.get_paginator("list_buckets")
             buckets = []
             for page in paginator.paginate():
                 buckets.extend(page.get("Buckets", []))
+            logger.debug(f"[{self.account_id}] Retrieved {len(buckets)} S3 buckets.")
             return buckets
         except ClientError as e:
-            logger.error("Critical: Failed to list buckets. %s", e)
+            logger.error(f"[{self.account_id}] Critical: Failed to list buckets. {e}")
             raise
 
     def get_bucket_region(self, bucket_name: str) -> str | None:
         if bucket_name in self._region_cache:
             return self._region_cache[bucket_name]
 
+        logger.debug(f"[{self.account_id}] Resolving region for bucket: {bucket_name}")
         try:
             response = self._client.get_bucket_location(Bucket=bucket_name)
             region = response.get("LocationConstraint") or "us-east-1"
@@ -291,10 +317,10 @@ class S3Client:
             return response["LoggingEnabled"].get("TargetBucket")
         return None
 
-    @safe_aws_call(default=False)
+    @safe_aws_call(default="Suspended")
     def get_accelerate_configuration(self, bucket_name: str) -> str:
         response = self._client.get_bucket_accelerate_configuration(Bucket=bucket_name)
-        return response.get("Status")
+        return response.get("Status", "Suspended")
 
     @safe_aws_call(default={})
     def get_bucket_tags(self, bucket_name: str) -> dict[str, str]:
@@ -306,7 +332,7 @@ class S3Client:
         response = self._client.get_bucket_request_payment(Bucket=bucket_name)
         return response.get("Payer", "BucketOwner")
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, safe_error_codes=["NoSuchCORSConfiguration"])
     def get_cors_count(self, bucket_name: str) -> int:
         response = self._client.get_bucket_cors(Bucket=bucket_name)
         return len(response.get("CORSRules", []))
@@ -420,6 +446,12 @@ class S3Client:
         return len(res.get("MetricsConfigurationList", []))
 
     def get_bucket_metrics(self, bucket_name: str) -> dict[str, Any]:
+        # Formatted manually to match the decorator output
+        logger.debug(
+            f"[{self.account_id}][{bucket_name}] "
+            "Fetching CloudWatch storage and "
+            "request metrics..."
+        )
         result = {
             "Storage": {
                 k: {"Size": 0.0, "Count": 0} for k in self.STORAGE_METRIC_MAP.keys()
@@ -443,7 +475,9 @@ class S3Client:
             )
             self._parse_metric_results(response, result)
         except ClientError as e:
-            logger.warning("Failed to fetch metrics for %s: %s", bucket_name, e)
+            logger.warning(
+                f"[{self.account_id}][{bucket_name}] Failed to fetch metrics: {e}"
+            )
 
         return result
 

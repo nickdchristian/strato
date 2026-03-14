@@ -21,7 +21,7 @@ def create_scan_command(target_scan_type: S3InventoryScanType, command_help_text
         verbose: bool = False,
         json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
         csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
-        org_role: str = typer.Option(
+        org_role: str | None = typer.Option(
             None, "--org-role", help="IAM role to assume for multi-account scan"
         ),
     ):
@@ -46,6 +46,8 @@ def create_scan_command(target_scan_type: S3InventoryScanType, command_help_text
             failures_only=False,
             org_role=org_role,
             view_class=S3InventoryView,
+            # S3 is a global service, region routing is handled internally
+            region=None,
         )
 
         if scan_code != 0:

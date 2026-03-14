@@ -40,7 +40,9 @@ def test_scanner_analyze_resource(mocker):
     }
     mock_client.get_kms_alias.return_value = "alias/my-kms-key"
 
-    scanner = EBSInventoryScanner(account_id="123")
+    scanner = EBSInventoryScanner(
+        check_type="ALL", session=mocker.Mock(), account_id="123"
+    )
     scanner.optimizer_status = "Active"
 
     scanner.instance_map = {"i-12345": "running"}
@@ -94,7 +96,9 @@ def test_scanner_unused_and_overprovisioned(mocker):
     mock_client = mock_client_cls.return_value
     mock_client.get_volume_metrics.return_value = {"VolumeIdleTime": 86400.0 * 30}
 
-    scanner = EBSInventoryScanner(account_id="123")
+    scanner = EBSInventoryScanner(
+        check_type="ALL", session=mocker.Mock(), account_id="123"
+    )
 
     volume_data = {
         "VolumeId": "vol-idle",
