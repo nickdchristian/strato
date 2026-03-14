@@ -20,11 +20,21 @@ def test_result_serialization():
 
 
 def test_scanner_analyze_resource(mocker):
+    # Patch the RDSClient to avoid real AWS calls
     mocker.patch("strato.services.rds.domains.reserved.checks.RDSClient")
 
     scanner = RDSReservedInstanceScanner(account_id="123")
 
-    scanner.client.session.region_name = "us-east-1"
+    # Create a mock session and set the region_name property properly
+    mock_session = mocker.Mock()
+    type(mock_session).region_name = mocker.PropertyMock(return_value="us-east-1")
+
+    # Inject the mock session into the scanner
+    scanner.session = mock_session
+
+    # Ensure the client's session (if instantiated) also reflects the region
+    if hasattr(scanner.client, "session"):
+        scanner.client.session = mock_session
 
     start_time = datetime.now(UTC) - timedelta(days=100)
 

@@ -4,7 +4,7 @@ from typer.testing import CliRunner
 
 import strato.services.awslambda.cli.inventory as inventory_module
 from strato.services.awslambda.cli.inventory import app
-from strato.services.awslambda.domains.inventory.checks import LambdaScanType
+from strato.services.awslambda.domains.inventory.checks import LambdaInventoryScanType
 
 runner = CliRunner(mix_stderr=False)
 
@@ -56,7 +56,7 @@ def test_inventory_scan_success_json(mock_run_scan):
     )
 
     args, kwargs = mock_run_scan.call_args
-    assert kwargs["check_type"] == LambdaScanType.INVENTORY
+    assert kwargs["check_type"] == LambdaInventoryScanType.ALL
     assert kwargs["json_output"] is True
     assert kwargs["region"] == "us-east-1"
 

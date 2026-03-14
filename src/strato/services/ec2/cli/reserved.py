@@ -2,17 +2,17 @@ import typer
 from rich.console import Console
 
 from strato.core.runner import run_scan
-from strato.services.ec2.domains.inventory.checks import (
-    EC2InventoryScanner,
-    EC2InventoryScanType,
+from strato.services.ec2.domains.reserved.checks import (
+    EC2ReservedInstanceScanner,
+    EC2ReservedScanType,
 )
-from strato.services.ec2.domains.inventory.views import EC2InventoryView
+from strato.services.ec2.domains.reserved.views import EC2ReservedInstanceView
 
-app = typer.Typer(help="EC2 Inventory & Audit")
+app = typer.Typer(help="EC2 Reserved Instances")
 console_err = Console(stderr=True)
 
 
-def create_scan_command(target_scan_type: EC2InventoryScanType, command_help_text: str):
+def create_scan_command(target_scan_type: EC2ReservedScanType, command_help_text: str):
     def command(
         verbose: bool = False,
         json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
@@ -36,14 +36,14 @@ def create_scan_command(target_scan_type: EC2InventoryScanType, command_help_tex
             raise typer.Exit(1)
 
         scan_code = run_scan(
-            scanner_cls=EC2InventoryScanner,
+            scanner_cls=EC2ReservedInstanceScanner,
             check_type=target_scan_type,
             verbose=verbose,
             json_output=json_output,
             csv_output=csv_output,
             failures_only=False,
             org_role=org_role,
-            view_class=EC2InventoryView,
+            view_class=EC2ReservedInstanceView,
             region=region,
         )
 
@@ -55,14 +55,14 @@ def create_scan_command(target_scan_type: EC2InventoryScanType, command_help_tex
 
 
 HELP_TEXT_MAP = {
-    EC2InventoryScanType.INVENTORY: "Gather a comprehensive inventory of EC2 Instances",
+    EC2ReservedScanType.RESERVED_INSTANCES: "Inventory of EC2 Reserved Instances",
 }
 
 CMD_NAME_MAP = {
-    EC2InventoryScanType.INVENTORY: "scan",
+    EC2ReservedScanType.RESERVED_INSTANCES: "scan",
 }
 
-for scan_type in EC2InventoryScanType:
+for scan_type in EC2ReservedScanType:
     default_name = scan_type.value.replace("_", "-").lower()
     cmd_name = CMD_NAME_MAP.get(scan_type, default_name)
     help_text = HELP_TEXT_MAP.get(scan_type, f"Run {cmd_name} scan.")
