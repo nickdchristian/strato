@@ -1,81 +1,94 @@
-from datetime import datetime
-from typing import Any, cast
+import json
 
-from strato.core.models import AuditResult
-from strato.core.presenter import GenericView
-from strato.services.ebs.domains.inventory.checks import EBSInventoryResult
+from strato.core.models import InventoryRecord
 
 
-class EBSInventoryView(GenericView):
+class EBSInventoryView:
     @classmethod
-    def get_headers(cls, check_type: str = "VOLUMES") -> list[str]:
+    def get_headers(cls, check_type: str) -> list[str]:
         return [
-            "account_id",
-            "region",
-            "name",
-            "attached_resources",
-            "instance_states",
-            "volume_id",
-            "type",
-            "size",
-            "iops",
-            "throughput",
-            "create_date",
-            "availability_zone",
-            "encryption",
-            "kms_key_alias",
-            "total_monthly_cost",
-            "snapshot_count",
-            "utilization_percentage_30_days",
-            "last_accessed_date",
-            "right_sizing_recommendation",
-            "unused_volume_flag",
-            "overprovisioned_flag",
+            "Account ID",
+            "Region",
+            "Volume ID",
+            "Type",
+            "Size (GB)",
+            "State",
+            "Attached Instances",
+            "Monthly Cost",
         ]
 
     @classmethod
-    def get_csv_headers(cls, check_type: str = "VOLUMES") -> list[str]:
-        return cls.get_headers(check_type)
-
-    @classmethod
-    def format_row(cls, result: AuditResult) -> list[str]:
-        ebs_result = cast(EBSInventoryResult, result)
-
-        def fmt(val: Any) -> str:
-            if val is None:
-                return ""
-            if isinstance(val, list):
-                return ";".join(str(x) for x in val)
-            if isinstance(val, bool):
-                return str(val)
-            if isinstance(val, datetime):
-                return val.isoformat()
-            return str(val)
-
+    def get_csv_headers(cls, check_type: str) -> list[str]:
         return [
-            ebs_result.account_id,
-            ebs_result.region,
-            ebs_result.resource_name,
-            fmt(ebs_result.attached_resources),
-            fmt(ebs_result.instance_states),
-            ebs_result.volume_id,
-            fmt(ebs_result.type),
-            fmt(ebs_result.size),
-            fmt(ebs_result.iops),
-            fmt(ebs_result.throughput),
-            fmt(ebs_result.create_date),
-            fmt(ebs_result.availability_zone),
-            fmt(ebs_result.encrypted),
-            fmt(ebs_result.kms_key_alias),
-            fmt(ebs_result.total_monthly_cost),
-            fmt(ebs_result.snapshot_count),
-            fmt(ebs_result.utilization_percentage_30_days),
-            fmt(ebs_result.last_accessed_date),
-            fmt(ebs_result.right_sizing_recommendation),
-            fmt(ebs_result.unused_volume_flag),
-            fmt(ebs_result.overprovisioned_flag),
+            "Account ID",
+            "Region",
+            "Volume Name",
+            "Volume ID",
+            "Resource ARN",
+            "Volume Type",
+            "Size (GB)",
+            "State",
+            "IOPS",
+            "Throughput",
+            "Availability Zone",
+            "Create Date",
+            "Encrypted",
+            "KMS Key Alias",
+            "Attached Instances",
+            "Instance States",
+            "Snapshot Count",
+            "Utilization Pct (30d)",
+            "Last Accessed",
+            "Total Monthly Cost",
+            "Optimizer Recommendation",
+            "Tags",
         ]
 
     @classmethod
-    def format_csv_row(cls, result: AuditResult) -> list[str]:
-        return cls.format_row(result)
+    def format_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
+
+        attached = d.get("AttachedInstances", [])
+        attached_display = f"{len(attached)} instance(s)" if attached else "Unattached"
+
+        cost = d.get("TotalMonthlyCost", 0.0)
+        cost_display = f"${cost:.2f}" if cost > 0 else "-"
+
+        return [
+            result.account_id,
+            result.region,
+            d.get("VolumeId", result.resource_name),
+            str(d.get("VolumeType", "-")),
+            str(d.get("SizeGB", 0)),
+            str(d.get("State", "-")),
+            attached_display,
+            cost_display,
+        ]
+
+    @classmethod
+    def format_csv_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
+        return [
+            result.account_id,
+            result.region,
+            result.resource_name,
+            str(d.get("VolumeId", "")),
+            result.resource_arn,
+            str(d.get("VolumeType", "")),
+            str(d.get("SizeGB", "")),
+            str(d.get("State", "")),
+            str(d.get("Iops", "")),
+            str(d.get("Throughput", "")),
+            str(d.get("AvailabilityZone", "")),
+            str(d.get("CreateDate", "")),
+            str(d.get("Encrypted", "")),
+            str(d.get("KmsKeyAlias", "")),
+            ";".join(d.get("AttachedInstances", [])),
+            ";".join(d.get("InstanceStates", [])),
+            str(d.get("SnapshotCount", "")),
+            str(d.get("UtilizationPct30d", "")),
+            str(d.get("LastAccessed", "")),
+            str(d.get("TotalMonthlyCost", "")),
+            str(d.get("RightSizingRecommendation", "")),
+            json.dumps(d.get("Tags", {})),
+        ]

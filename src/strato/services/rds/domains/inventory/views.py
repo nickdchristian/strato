@@ -1,147 +1,134 @@
-from typing import Any, cast
+import json
 
-from strato.core.models import AuditResult
-from strato.core.presenter import GenericView
-from strato.services.rds.domains.inventory.checks import RDSInventoryResult
+from strato.core.models import InventoryRecord
 
 
-class RDSInventoryView(GenericView):
+class RDSInventoryView:
     @classmethod
     def get_headers(cls, check_type: str = "INVENTORY") -> list[str]:
-        return cls.get_csv_headers(check_type)
+        return [
+            "Account ID",
+            "Region",
+            "DB Identifier",
+            "Engine",
+            "Class",
+            "State",
+            "Storage (GB)",
+            "Public",
+        ]
 
     @classmethod
     def get_csv_headers(cls, check_type: str = "INVENTORY") -> list[str]:
         return [
-            "account_id",
-            "region",
-            "db_identifier",
-            "db_cluster_identifier",
-            "status",
-            "tags",
-            "rds_extended_support",
-            "engine",
-            "engine_version",
-            "availability_zone",
-            "size",
-            "publicly_accessible",
-            "vpc",
-            "port",
-            "security_group_ids",
-            "multi-az",
-            "storage_type",
-            "allocated_storage",
-            "max_allocated_storage",
-            "storage_encrypted",
-            "provisioned_iops",
-            "storage_throughput",
-            "iam_auth_enabled",
-            "ca_certificate_identifier",
-            "parameter_groups",
-            "option_groups",
-            "enabled_cloudwatch_logs_exports",
-            "peak_active_session_count_90_days",
-            "mean_active_session_count_90_days",
-            "peak_active_transactions_count_90_days",
-            "mean_active_transactions_count_90_days",
-            "peak_commit_throughput_90_days",
-            "mean_commit_throughput_90_days",
-            "peak_cpu_utilization_90_days",
-            "mean_cpu_utilization_90_days",
-            "peak_database_connections_90_days",
-            "mean_database_connections_90_days",
-            "peak_read_throughput_90_days",
-            "mean_read_throughput_90_days",
-            "peak_write_throughput_90_days",
-            "mean_write_throughput_90_days",
-            "backup_retention_period",
-            "preferred_backup_window",
-            "preferred_maintenance_window",
-            "auto_minor_version_upgrade",
-            "deletion_protection",
-            "performance_insights_enabled",
-            "monitoring_interval",
-            "enhanced_monitoring_resource_arn",
-            "license_model",
-            "monthly_cost_estimate",
-            "reserved_instance_coverage",
-            "rightsizing_recommendation",
-            "utilization_score",
-            "cost_optimization_opportunity",
+            "Account ID",
+            "Region",
+            "DB Identifier",
+            "Resource ARN",
+            "Cluster Identifier",
+            "State",
+            "Engine",
+            "Engine Version",
+            "Availability Zone",
+            "Instance Class",
+            "VPC ID",
+            "Port",
+            "Security Groups",
+            "Publicly Accessible",
+            "Multi-AZ",
+            "Storage Type",
+            "Allocated Storage (GB)",
+            "Max Storage (GB)",
+            "Encrypted",
+            "Provisioned IOPS",
+            "Storage Throughput",
+            "IAM Auth",
+            "CA Cert",
+            "Parameter Groups",
+            "Option Groups",
+            "Log Exports",
+            "Peak CPU (90d)",
+            "Mean CPU (90d)",
+            "Peak Conns (90d)",
+            "Mean Conns (90d)",
+            "Peak Read (90d)",
+            "Mean Read (90d)",
+            "Peak Write (90d)",
+            "Mean Write (90d)",
+            "Backup Retention (Days)",
+            "Backup Window",
+            "Maintenance Window",
+            "Auto Minor Upgrade",
+            "Deletion Protection",
+            "Performance Insights",
+            "Monitoring Interval",
+            "License Model",
+            "Tags",
         ]
 
     @classmethod
-    def format_row(cls, result: AuditResult) -> list[str]:
-        return cls.format_csv_row(result)
-
-    @classmethod
-    def format_csv_row(cls, result: AuditResult) -> list[str]:
-        rds_result = cast(RDSInventoryResult, result)
-        tags_string = "; ".join(
-            f"{key}={value}" for key, value in rds_result.tags.items()
-        )
-
-        def fmt(val: Any) -> str:
-            if val is None:
-                return ""
-            if isinstance(val, list):
-                return ";".join(str(x) for x in val)
-            return str(val)
+    def format_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
 
         return [
-            rds_result.account_id,
-            rds_result.region,
-            rds_result.db_identifier,
-            rds_result.db_cluster_identifier,
-            rds_result.status,
-            tags_string,
-            fmt(rds_result.rds_extended_support),
-            fmt(rds_result.engine),
-            fmt(rds_result.engine_version),
-            fmt(rds_result.availability_zone),
-            fmt(rds_result.size),
-            fmt(rds_result.publicly_accessible),
-            fmt(rds_result.vpc),
-            fmt(rds_result.port),
-            fmt(rds_result.security_group_ids),
-            fmt(rds_result.multi_az),
-            fmt(rds_result.storage_type),
-            fmt(rds_result.allocated_storage),
-            fmt(rds_result.max_allocated_storage),
-            fmt(rds_result.storage_encrypted),
-            fmt(rds_result.provisioned_iops),
-            fmt(rds_result.storage_throughput),
-            fmt(rds_result.iam_auth_enabled),
-            fmt(rds_result.ca_certificate_identifier),
-            fmt(rds_result.parameter_groups),
-            fmt(rds_result.option_groups),
-            fmt(rds_result.enabled_cloudwatch_logs_exports),
-            fmt(rds_result.peak_active_session_count_90_days),
-            fmt(rds_result.mean_active_session_count_90_days),
-            fmt(rds_result.peak_active_transactions_count_90_days),
-            fmt(rds_result.mean_active_transactions_count_90_days),
-            fmt(rds_result.peak_commit_throughput_90_days),
-            fmt(rds_result.mean_commit_throughput_90_days),
-            fmt(rds_result.peak_cpu_utilization_90_days),
-            fmt(rds_result.mean_cpu_utilization_90_days),
-            fmt(rds_result.peak_database_connections_90_days),
-            fmt(rds_result.mean_database_connections_90_days),
-            fmt(rds_result.peak_read_throughput_90_days),
-            fmt(rds_result.mean_read_throughput_90_days),
-            fmt(rds_result.peak_write_throughput_90_days),
-            fmt(rds_result.mean_write_throughput_90_days),
-            fmt(rds_result.backup_retention_period),
-            fmt(rds_result.preferred_backup_window),
-            fmt(rds_result.preferred_maintenance_window),
-            fmt(rds_result.auto_minor_version_upgrade),
-            fmt(rds_result.deletion_protection),
-            fmt(rds_result.performance_insights_enabled),
-            fmt(rds_result.monitoring_interval),
-            fmt(rds_result.enhanced_monitoring_resource_arn),
-            fmt(rds_result.license_model),
-            fmt(rds_result.monthly_cost_estimate),
-            fmt(rds_result.reserved_instance_coverage),
-            fmt(rds_result.rightsizing_recommendation),
-            fmt(rds_result.utilization_score),
-            fmt(rds_result.cost_optimization_opportunity),
+            result.account_id,
+            result.region,
+            result.resource_name,
+            str(d.get("Engine", "-")),
+            str(d.get("InstanceClass", "-")),
+            str(d.get("State", "-")),
+            str(d.get("AllocatedStorageGb", 0)),
+            "Yes" if d.get("PubliclyAccessible") else "No",
+        ]
+
+    @classmethod
+    def format_csv_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
+
+        def fmt(val):
+            return "" if val is None else str(val)
+
+        return [
+            result.account_id,
+            result.region,
+            result.resource_name,
+            result.resource_arn,
+            fmt(d.get("DbClusterIdentifier")),
+            fmt(d.get("State")),
+            fmt(d.get("Engine")),
+            fmt(d.get("EngineVersion")),
+            fmt(d.get("AvailabilityZone")),
+            fmt(d.get("InstanceClass")),
+            fmt(d.get("VpcId")),
+            fmt(d.get("Port")),
+            ";".join(d.get("SecurityGroupIds", [])),
+            fmt(d.get("PubliclyAccessible")),
+            fmt(d.get("MultiAz")),
+            fmt(d.get("StorageType")),
+            fmt(d.get("AllocatedStorageGb")),
+            fmt(d.get("MaxAllocatedStorageGb")),
+            fmt(d.get("StorageEncrypted")),
+            fmt(d.get("ProvisionedIops")),
+            fmt(d.get("StorageThroughput")),
+            fmt(d.get("IamAuthEnabled")),
+            fmt(d.get("CaCertificateIdentifier")),
+            ";".join(d.get("ParameterGroups", [])),
+            ";".join(d.get("OptionGroups", [])),
+            ";".join(d.get("CloudwatchLogExports", [])),
+            fmt(d.get("PeakCpu90d")),
+            fmt(d.get("MeanCpu90d")),
+            fmt(d.get("PeakConnections90d")),
+            fmt(d.get("MeanConnections90d")),
+            fmt(d.get("PeakReadThroughput90d")),
+            fmt(d.get("MeanReadThroughput90d")),
+            fmt(d.get("PeakWriteThroughput90d")),
+            fmt(d.get("MeanWriteThroughput90d")),
+            fmt(d.get("BackupRetentionPeriodDays")),
+            fmt(d.get("PreferredBackupWindow")),
+            fmt(d.get("PreferredMaintenanceWindow")),
+            fmt(d.get("AutoMinorVersionUpgrade")),
+            fmt(d.get("DeletionProtection")),
+            fmt(d.get("PerformanceInsightsEnabled")),
+            fmt(d.get("MonitoringIntervalSeconds")),
+            fmt(d.get("LicenseModel")),
+            json.dumps(d.get("Tags", {})),
         ]

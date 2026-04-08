@@ -1,12 +1,11 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
 from enum import StrEnum, auto
 from typing import Any, cast
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.rds.client import RDSClient
 
 logger = logging.getLogger(__name__)
@@ -17,90 +16,9 @@ class RDSInventoryScanType(StrEnum):
     INVENTORY = auto()
 
 
-@dataclass
-class RDSInventoryResult(AuditResult):
-    """
-    Data container for RDS Inventory and Configuration details.
-    """
+class RDSInventoryScanner(BaseScanner[InventoryRecord]):
+    is_global_service = False
 
-    resource_arn: str = ""
-    resource_id: str = ""
-    resource_name: str = ""
-    region: str = ""
-    account_id: str = "Unknown"
-
-    db_identifier: str = ""
-    db_cluster_identifier: str = ""
-    state: str = ""
-    rds_extended_support: str = "Unknown"
-    engine: str = ""
-    engine_version: str = ""
-    availability_zone: str = ""
-    size: str = ""
-    vpc: str = ""
-    port: int = 0
-    security_group_ids: list[str] = field(default_factory=list)
-    publicly_accessible: bool = False
-    multi_az: bool = False
-    storage_type: str = ""
-    provisioned_iops: int = 0
-    storage_throughput: int = 0
-
-    iam_auth_enabled: bool = False
-    ca_certificate_identifier: str = ""
-    parameter_groups: list[str] = field(default_factory=list)
-    option_groups: list[str] = field(default_factory=list)
-    enabled_cloudwatch_logs_exports: list[str] = field(default_factory=list)
-
-    peak_active_session_count_90_days: float = 0.0
-    mean_active_session_count_90_days: float = 0.0
-    peak_active_transactions_count_90_days: float = 0.0
-    mean_active_transactions_count_90_days: float = 0.0
-    peak_commit_throughput_90_days: float = 0.0
-    mean_commit_throughput_90_days: float = 0.0
-
-    peak_cpu_utilization_90_days: float = 0.0
-    mean_cpu_utilization_90_days: float = 0.0
-
-    peak_database_connections_90_days: float = 0.0
-    mean_database_connections_90_days: float = 0.0
-
-    peak_read_throughput_90_days: float = 0.0
-    mean_read_throughput_90_days: float = 0.0
-    peak_write_throughput_90_days: float = 0.0
-    mean_write_throughput_90_days: float = 0.0
-
-    allocated_storage: int = 0
-    max_allocated_storage: int = 0
-    storage_encrypted: bool = False
-    backup_retention_period: int = 0
-    preferred_backup_window: str = ""
-    preferred_maintenance_window: str = ""
-    auto_minor_version_upgrade: bool = False
-    deletion_protection: bool = False
-    performance_insights_enabled: bool = False
-    monitoring_interval: int = 0
-    enhanced_monitoring_resource_arn: str = ""
-    license_model: str = ""
-
-    monthly_cost_estimate: str = ""
-    reserved_instance_coverage: str = ""
-    rightsizing_recommendation: str = ""
-    utilization_score: str = ""
-    cost_optimization_opportunity: str = ""
-
-    tags: dict[str, str] = field(default_factory=dict)
-    check_type: str = RDSInventoryScanType.ALL
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        keys_to_remove = ["findings", "status_score", "status"]
-        for key in keys_to_remove:
-            data.pop(key, None)
-        return data
-
-
-class RDSInventoryScanner(BaseScanner[RDSInventoryResult]):
     def __init__(
         self,
         check_type: str = RDSInventoryScanType.ALL,
@@ -112,15 +30,16 @@ class RDSInventoryScanner(BaseScanner[RDSInventoryResult]):
 
     @property
     def service_name(self) -> str:
-        return f"RDS Inventory ({self.check_type})"
+        return "RDS Instances"
 
     def fetch_resources(self) -> Iterable[dict[str, Any]]:
         yield from self.client.list_instances()
 
-    def analyze_resource(self, resource: Any) -> RDSInventoryResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         resource_data = cast(dict[str, Any], resource)
         db_id = str(resource_data.get("DBInstanceIdentifier", ""))
         arn = str(resource_data.get("DBInstanceArn", ""))
+
         tags = {
             str(t["Key"]): str(t["Value"]) for t in resource_data.get("TagList", [])
         }
@@ -151,65 +70,68 @@ class RDSInventoryScanner(BaseScanner[RDSInventoryResult]):
             for og in resource_data.get("OptionGroupMemberships", [])
         ]
 
-        logger.debug(f"[{db_id}] Analysis complete.")
+        parsed_region = az[:-1] if az else str(self.session.region_name or "Unknown")
 
-        return RDSInventoryResult(
-            account_id=self.account_id,
-            resource_id=db_id,
-            resource_name=db_id,
-            resource_arn=arn,
-            region=az[:-1] if az else str(self.session.region_name or "Unknown"),
-            db_identifier=db_id,
-            db_cluster_identifier=str(resource_data.get("DBClusterIdentifier", "")),
-            state=str(resource_data.get("DBInstanceStatus", "unknown")),
-            rds_extended_support="Unknown",
-            engine=str(resource_data.get("Engine", "")),
-            engine_version=str(resource_data.get("EngineVersion", "")),
-            availability_zone=az,
-            size=str(resource_data.get("DBInstanceClass", "")),
-            vpc=str(resource_data.get("DBSubnetGroup", {}).get("VpcId", "")),
-            port=port,
-            security_group_ids=sg_ids,
-            publicly_accessible=bool(resource_data.get("PubliclyAccessible", False)),
-            multi_az=bool(resource_data.get("MultiAZ", False)),
-            storage_type=str(resource_data.get("StorageType", "")),
-            provisioned_iops=int(resource_data.get("Iops", 0)),
-            storage_throughput=int(resource_data.get("StorageThroughput", 0)),
-            iam_auth_enabled=bool(
+        details = {
+            "DbClusterIdentifier": str(resource_data.get("DBClusterIdentifier", "")),
+            "State": str(resource_data.get("DBInstanceStatus", "unknown")),
+            "Engine": str(resource_data.get("Engine", "")),
+            "EngineVersion": str(resource_data.get("EngineVersion", "")),
+            "AvailabilityZone": az,
+            "InstanceClass": str(resource_data.get("DBInstanceClass", "")),
+            "VpcId": str(resource_data.get("DBSubnetGroup", {}).get("VpcId", "")),
+            "Port": port,
+            "SecurityGroupIds": sg_ids,
+            "PubliclyAccessible": bool(resource_data.get("PubliclyAccessible", False)),
+            "MultiAz": bool(resource_data.get("MultiAZ", False)),
+            "StorageType": str(resource_data.get("StorageType", "")),
+            "ProvisionedIops": int(resource_data.get("Iops", 0)),
+            "StorageThroughput": int(resource_data.get("StorageThroughput", 0)),
+            "IamAuthEnabled": bool(
                 resource_data.get("IAMDatabaseAuthenticationEnabled", False)
             ),
-            ca_certificate_identifier=resource_data.get("CACertificateIdentifier", ""),
-            parameter_groups=param_groups,
-            option_groups=option_groups,
-            enabled_cloudwatch_logs_exports=log_exports,
-            peak_cpu_utilization_90_days=cpu_peak,
-            mean_cpu_utilization_90_days=cpu_mean,
-            peak_database_connections_90_days=conn_peak,
-            mean_database_connections_90_days=conn_mean,
-            peak_read_throughput_90_days=read_peak,
-            mean_read_throughput_90_days=read_mean,
-            peak_write_throughput_90_days=write_peak,
-            mean_write_throughput_90_days=write_mean,
-            allocated_storage=int(resource_data.get("AllocatedStorage", 0)),
-            max_allocated_storage=int(resource_data.get("MaxAllocatedStorage", 0)),
-            storage_encrypted=bool(resource_data.get("StorageEncrypted", False)),
-            backup_retention_period=int(resource_data.get("BackupRetentionPeriod", 0)),
-            preferred_backup_window=str(resource_data.get("PreferredBackupWindow", "")),
-            preferred_maintenance_window=str(
+            "CaCertificateIdentifier": resource_data.get("CACertificateIdentifier", ""),
+            "ParameterGroups": param_groups,
+            "OptionGroups": option_groups,
+            "CloudwatchLogExports": log_exports,
+            "PeakCpu90d": cpu_peak,
+            "MeanCpu90d": cpu_mean,
+            "PeakConnections90d": conn_peak,
+            "MeanConnections90d": conn_mean,
+            "PeakReadThroughput90d": read_peak,
+            "MeanReadThroughput90d": read_mean,
+            "PeakWriteThroughput90d": write_peak,
+            "MeanWriteThroughput90d": write_mean,
+            "AllocatedStorageGb": int(resource_data.get("AllocatedStorage", 0)),
+            "MaxAllocatedStorageGb": int(resource_data.get("MaxAllocatedStorage", 0)),
+            "StorageEncrypted": bool(resource_data.get("StorageEncrypted", False)),
+            "BackupRetentionPeriodDays": int(
+                resource_data.get("BackupRetentionPeriod", 0)
+            ),
+            "PreferredBackupWindow": str(
+                resource_data.get("PreferredBackupWindow", "")
+            ),
+            "PreferredMaintenanceWindow": str(
                 resource_data.get("PreferredMaintenanceWindow", "")
             ),
-            auto_minor_version_upgrade=bool(
+            "AutoMinorVersionUpgrade": bool(
                 resource_data.get("AutoMinorVersionUpgrade", False)
             ),
-            deletion_protection=bool(resource_data.get("DeletionProtection", False)),
-            performance_insights_enabled=bool(
+            "DeletionProtection": bool(resource_data.get("DeletionProtection", False)),
+            "PerformanceInsightsEnabled": bool(
                 resource_data.get("PerformanceInsightsEnabled", False)
             ),
-            monitoring_interval=int(resource_data.get("MonitoringInterval", 0)),
-            enhanced_monitoring_resource_arn=str(
-                resource_data.get("EnhancedMonitoringResourceArn", "")
+            "MonitoringIntervalSeconds": int(
+                resource_data.get("MonitoringInterval", 0)
             ),
-            license_model=str(resource_data.get("LicenseModel", "")),
-            tags=tags,
-            check_type=self.check_type,
+            "LicenseModel": str(resource_data.get("LicenseModel", "")),
+            "Tags": tags,
+        }
+
+        return InventoryRecord(
+            resource_arn=arn,
+            resource_name=db_id,
+            region=parsed_region,
+            account_id=self.account_id,
+            details=details,
         )

@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from enum import IntEnum
 from typing import Any, TypeVar
 
 import boto3
@@ -13,66 +12,25 @@ logger = logging.getLogger(__name__)
 console_err = Console(stderr=True)
 
 
-class ObservationLevel(IntEnum):
-    """
-    Standardized scoring levels for audit findings across all Well-Architected pillars.
-
-    Use these levels to weigh the impact of a finding regardless of the category:
-
-    * **CRITICAL (100):** Existential threat to the workload or business.
-    * **HIGH (50):** Significant risk or violation of core architecture standards.
-    * **MEDIUM (20):** Deviation from best practices. Not immediate, but technical debt.
-    * **LOW (5):** Hygiene, organization, or minor optimization opportunities.
-    * **INFO (1):** Contextual data. Not a defect, but useful for the report.
-    * **PASS (0):** The resource fully complies with the check requirements.
-    """
-
-    CRITICAL = 100
-    HIGH = 50
-    MEDIUM = 20
-    LOW = 5
-    INFO = 1
-    PASS = 0
-
-
 @dataclass
-class AuditResult:
-    """Base data structure for any resource audit."""
+class InventoryRecord:
+    """Base data structure for any discovered AWS resource."""
 
     resource_arn: str
     resource_name: str
     region: str
     account_id: str = "Unknown"
-    status_score: int = 0
-    findings: list[str] = field(default_factory=list)
-
-    @property
-    def is_violation(self) -> bool:
-        return self.status_score >= ObservationLevel.LOW
-
-    @property
-    def status(self) -> str:
-        if self.status_score >= ObservationLevel.CRITICAL:
-            return "CRITICAL"
-        if self.status_score >= ObservationLevel.HIGH:
-            return "HIGH"
-        if self.status_score >= ObservationLevel.MEDIUM:
-            return "MEDIUM"
-        if self.status_score >= ObservationLevel.LOW:
-            return "LOW"
-        if self.status_score == ObservationLevel.INFO:
-            return "INFO"
-        return "PASS"
+    details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-T = TypeVar("T", bound=AuditResult)
+T = TypeVar("T", bound=InventoryRecord)
 
 
-class BaseScanner[AuditResultType: AuditResult](ABC):
-    """Abstract base class for all resource scanners."""
+class BaseScanner[InventoryRecordType: InventoryRecord](ABC):
+    """Abstract base class for resource discovery."""
 
     is_global_service: bool = False
 
@@ -96,24 +54,18 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
         pass
 
     @abstractmethod
-    def analyze_resource(self, resource: Any) -> AuditResultType:
+    def analyze_resource(self, resource: Any) -> InventoryRecordType:
+        """Transforms a raw AWS boto3 dictionary into an InventoryRecord."""
         pass
 
-    def scan(self, silent: bool = False) -> list[AuditResultType]:
-        """
-        Orchestrates the fetching and analyzing of resources.
-        Uses console_err for status to avoid polluting stdout.
-        """
+    def scan(self, silent: bool = False) -> list[InventoryRecordType]:
         results = []
+        logger.debug(f"[{self.account_id}] Initiating {self.service_name} discovery...")
 
-        logger.debug(f"[{self.account_id}] Initiating {self.service_name} scan...")
-
-        # We wrap fetch_resources in a list to count them for reassuring logging,
-        # assuming AWS resource counts per region/account fit in memory.
         resources = list(self.fetch_resources())
         logger.debug(
             f"[{self.account_id}] Fetched {len(resources)} {self.service_name}"
-            f" resources to analyze."
+            f" resources to process."
         )
 
         def process_stream():
@@ -124,13 +76,13 @@ class BaseScanner[AuditResultType: AuditResult](ABC):
             process_stream()
         else:
             with console_err.status(
-                f"[bold yellow]Scanning {self.service_name} resources...",
+                f"[bold yellow]Discovering {self.service_name} resources...",
                 spinner="dots",
             ):
                 process_stream()
 
         logger.debug(
-            f"[{self.account_id}] Successfully analyzed"
+            f"[{self.account_id}] Successfully processed"
             f" {len(results)} {self.service_name} resources."
         )
 

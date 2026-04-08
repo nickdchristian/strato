@@ -27,22 +27,12 @@ def scan(
     """
     Scan for Purchased Reserved Instances (Active Contracts).
     """
-    if not (json_output or csv_output):
-        console_err.print(
-            "\n[bold red]Error:[/bold red] RI data requires structured output."
-        )
-        console_err.print(
-            "Please specify: [green]--json[/green] or [green]--csv[/green]\n"
-        )
-        raise typer.Exit(1)
-
     scan_code = run_scan(
         scanner_cls=RDSReservedInstanceScanner,
         check_type=RDSReservedScanType.RESERVED_INSTANCES,
         verbose=verbose,
         json_output=json_output,
         csv_output=csv_output,
-        failures_only=False,
         org_role=org_role,
         view_class=RDSReservedInstanceView,
         region=region,

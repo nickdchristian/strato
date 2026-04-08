@@ -1,13 +1,12 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any, cast
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.s3.client import S3Client
 
 logger = logging.getLogger(__name__)
@@ -18,91 +17,7 @@ class S3InventoryScanType(StrEnum):
     INVENTORY = auto()
 
 
-@dataclass
-class S3InventoryResult(AuditResult):
-    """
-    Data container for S3 Inventory and Configuration details.
-    """
-
-    resource_arn: str = ""
-    resource_name: str = ""
-    region: str = ""
-    account_id: str = "Unknown"
-
-    creation_date: datetime | None = None
-    encryption_type: str | None = None
-    kms_master_key_id: str | None = None
-    bucket_key_enabled: bool = False
-
-    server_access_logging: str | None = "Disabled"
-    block_all_public_access: bool = False
-    bucket_ownership: str | None = None
-    acl_status: str = "Disabled"
-    has_bucket_policy: bool = False
-    request_payer: str = "BucketOwner"
-    cors_rules_count: int = 0
-    static_website_hosting: str = "Disabled"
-
-    transfer_acceleration: str = "Suspended"
-    object_lock: str = "Disabled"
-    object_lock_mode: str | None = None
-    object_lock_retention: str | None = None
-    intelligent_tiering_config: str = "None"
-    mfa_delete: str = "Disabled"
-    versioning_status: str = "Suspended"
-
-    replication_status: str = "Disabled"
-    replication_rule_name: str | None = None
-    replication_destination: str | None = None
-    replication_storage_class: str | None = None
-    replication_kms_encrypted: bool = False
-    replication_cost_impact: str | None = None
-    lifecycle_status: str = "Disabled"
-    lifecycle_rule_count: int = 0
-    lifecycle_active_rule_id: str | None = None
-
-    notification_configs: int = 0
-    inventory_configs: int = 0
-    analytics_configs: int = 0
-    metric_configs: int = 0
-
-    standard_size_gb: float = 0.0
-    standard_ia_size_gb: float = 0.0
-    rrs_size_gb: float = 0.0
-    glacier_size_gb: float = 0.0
-    deep_archive_size_gb: float = 0.0
-    intelligent_tiering_size_gb: float = 0.0
-    total_bucket_size_gb: float = 0.0
-
-    glacier_object_count: int = 0
-    deep_archive_object_count: int = 0
-    total_object_count: int = 0
-
-    all_requests_count: int = 0
-    get_requests_count: int = 0
-    put_requests_count: int = 0
-
-    tags: dict[str, str] = field(default_factory=dict)
-    check_type: str = S3InventoryScanType.ALL
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serializes the result to a dictionary, removing parent AuditResult fields
-        that are not relevant to raw inventory data.
-        """
-        data = asdict(self)
-
-        if self.creation_date:
-            data["creation_date"] = self.creation_date.isoformat()
-
-        keys_to_remove = ["findings", "status_score", "status"]
-        for key in keys_to_remove:
-            data.pop(key, None)
-
-        return data
-
-
-class S3InventoryScanner(BaseScanner[S3InventoryResult]):
+class S3InventoryScanner(BaseScanner[InventoryRecord]):
     is_global_service = True
 
     def __init__(
@@ -116,16 +31,22 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
 
     @property
     def service_name(self) -> str:
-        return f"S3 Inventory ({self.check_type})"
+        return "S3 Buckets"
 
     def fetch_resources(self) -> Iterable[dict[str, Any]]:
         yield from self.client.list_buckets()
 
-    def analyze_resource(self, resource: Any) -> S3InventoryResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         bucket_data = cast(dict[str, Any], resource)
         bucket_name = str(bucket_data.get("Name", "Unknown"))
         bucket_arn = f"arn:aws:s3:::{bucket_name}"
+
         creation_date = bucket_data.get("CreationDate")
+        creation_string = (
+            creation_date.isoformat()
+            if isinstance(creation_date, datetime)
+            else str(creation_date)
+        )
 
         region = str(self.client.get_bucket_region(bucket_name) or "Unknown")
         bucket_tags = self.client.get_bucket_tags(bucket_name)
@@ -162,75 +83,86 @@ class S3InventoryScanner(BaseScanner[S3InventoryResult]):
 
         logger.debug(f"[{bucket_name}] Analysis complete.")
 
-        return S3InventoryResult(
-            account_id=self.account_id,
+        details = {
+            "CreationDate": creation_string,
+            "EncryptionType": encryption_status.get("SSEAlgorithm"),
+            "KmsMasterKeyId": encryption_status.get("KMSMasterKeyID"),
+            "BucketKeyEnabled": bool(encryption_status.get("BucketKeyEnabled", False)),
+            "BlockAllPublicAccess": bool(public_access_status),
+            "HasBucketPolicy": bucket_policy.get("Access") != "Error",
+            "BucketOwnership": self.client.get_acl_status(bucket_name).get("Ownership"),
+            "AclStatus": self.client.get_acl_status(bucket_name).get(
+                "Status", "Disabled"
+            ),
+            "ServerAccessLogging": self.client.get_logging_status(bucket_name)
+            or "Disabled",
+            "VersioningStatus": versioning_status.get("Status", "Suspended"),
+            "MfaDelete": "Enabled"
+            if versioning_status.get("MFADelete")
+            else "Disabled",
+            "ObjectLock": "Enabled"
+            if object_lock_details.get("Status")
+            else "Disabled",
+            "ObjectLockMode": object_lock_details.get("Mode"),
+            "ObjectLockRetention": retention,
+            "StaticWebsiteHosting": "Enabled"
+            if self.client.get_website_hosting_status(bucket_name)
+            else "Disabled",
+            "TransferAcceleration": self.client.get_accelerate_configuration(
+                bucket_name
+            ),
+            "RequestPayer": self.client.get_request_payment(bucket_name),
+            "CorsRulesCount": self.client.get_cors_count(bucket_name),
+            "IntelligentTieringConfig": "Enabled"
+            if intelligent_tiering_configs
+            else "Disabled",
+            "ReplicationStatus": str(
+                replication_info.get("replication_status", "Disabled")
+            ),
+            "ReplicationRuleName": replication_info.get("replication_rule_name"),
+            "ReplicationDestination": replication_info.get("replication_destination"),
+            "ReplicationStorageClass": replication_info.get(
+                "replication_storage_class"
+            ),
+            "ReplicationKmsEncrypted": bool(
+                replication_info.get("replication_kms_encrypted", False)
+            ),
+            "ReplicationCostImpact": replication_info.get("replication_cost_impact"),
+            "LifecycleStatus": str(lifecycle_info.get("lifecycle_status", "Disabled")),
+            "LifecycleRuleCount": int(lifecycle_info.get("lifecycle_rule_count", 0)),
+            "LifecycleActiveRuleId": lifecycle_info.get("lifecycle_active_rule_id"),
+            "NotificationConfigs": self.client.get_notification_configuration_count(
+                bucket_name
+            ),
+            "InventoryConfigs": self.client.get_inventory_configuration_count(
+                bucket_name
+            ),
+            "AnalyticsConfigs": self.client.get_analytics_configuration_count(
+                bucket_name
+            ),
+            "MetricConfigs": self.client.get_metrics_configuration_count(bucket_name),
+            "StandardSizeGb": storage_metrics["Standard"]["Size"],
+            "StandardIaSizeGb": storage_metrics["Standard-IA"]["Size"],
+            "IntelligentTieringSizeGb": storage_metrics["Intelligent-Tiering"]["Size"],
+            "RrsSizeGb": storage_metrics["RRS"]["Size"],
+            "GlacierSizeGb": storage_metrics["Glacier"]["Size"],
+            "DeepArchiveSizeGb": storage_metrics["Glacier-Deep-Archive"]["Size"],
+            "GlacierObjectCount": storage_metrics["Glacier"]["Count"],
+            "DeepArchiveObjectCount": storage_metrics["Glacier-Deep-Archive"]["Count"],
+            "TotalBucketSizeGb": round(total_bucket_size, 2),
+            "TotalObjectCount": int(total_object_count),
+            "AllRequestsCount": request_metrics["All"],
+            "GetRequestsCount": request_metrics["Get"],
+            "PutRequestsCount": request_metrics["Put"],
+            "Tags": bucket_tags,
+        }
+
+        return InventoryRecord(
             resource_arn=bucket_arn,
             resource_name=bucket_name,
             region=region,
-            creation_date=creation_date,
-            encryption_type=encryption_status.get("SSEAlgorithm"),
-            kms_master_key_id=encryption_status.get("KMSMasterKeyID"),
-            bucket_key_enabled=bool(encryption_status.get("BucketKeyEnabled", False)),
-            block_all_public_access=bool(public_access_status),
-            has_bucket_policy=bucket_policy.get("Access") != "Error",
-            bucket_ownership=self.client.get_acl_status(bucket_name).get("Ownership"),
-            acl_status=self.client.get_acl_status(bucket_name).get(
-                "Status", "Disabled"
-            ),
-            server_access_logging=self.client.get_logging_status(bucket_name)
-            or "Disabled",
-            versioning_status=versioning_status.get("Status", "Suspended"),
-            mfa_delete="Enabled" if versioning_status.get("MFADelete") else "Disabled",
-            object_lock="Enabled" if object_lock_details.get("Status") else "Disabled",
-            object_lock_mode=object_lock_details.get("Mode"),
-            object_lock_retention=retention,
-            static_website_hosting="Enabled"
-            if self.client.get_website_hosting_status(bucket_name)
-            else "Disabled",
-            transfer_acceleration=self.client.get_accelerate_configuration(bucket_name),
-            request_payer=self.client.get_request_payment(bucket_name),
-            cors_rules_count=self.client.get_cors_count(bucket_name),
-            intelligent_tiering_config="Enabled"
-            if intelligent_tiering_configs
-            else "Disabled",
-            replication_status=str(
-                replication_info.get("replication_status", "Disabled")
-            ),
-            replication_rule_name=replication_info.get("replication_rule_name"),
-            replication_destination=replication_info.get("replication_destination"),
-            replication_storage_class=replication_info.get("replication_storage_class"),
-            replication_kms_encrypted=bool(
-                replication_info.get("replication_kms_encrypted", False)
-            ),
-            replication_cost_impact=replication_info.get("replication_cost_impact"),
-            lifecycle_status=str(lifecycle_info.get("lifecycle_status", "Disabled")),
-            lifecycle_rule_count=int(lifecycle_info.get("lifecycle_rule_count", 0)),
-            lifecycle_active_rule_id=lifecycle_info.get("lifecycle_active_rule_id"),
-            notification_configs=self.client.get_notification_configuration_count(
-                bucket_name
-            ),
-            inventory_configs=self.client.get_inventory_configuration_count(
-                bucket_name
-            ),
-            analytics_configs=self.client.get_analytics_configuration_count(
-                bucket_name
-            ),
-            metric_configs=self.client.get_metrics_configuration_count(bucket_name),
-            standard_size_gb=storage_metrics["Standard"]["Size"],
-            standard_ia_size_gb=storage_metrics["Standard-IA"]["Size"],
-            intelligent_tiering_size_gb=storage_metrics["Intelligent-Tiering"]["Size"],
-            rrs_size_gb=storage_metrics["RRS"]["Size"],
-            glacier_size_gb=storage_metrics["Glacier"]["Size"],
-            deep_archive_size_gb=storage_metrics["Glacier-Deep-Archive"]["Size"],
-            glacier_object_count=storage_metrics["Glacier"]["Count"],
-            deep_archive_object_count=storage_metrics["Glacier-Deep-Archive"]["Count"],
-            total_bucket_size_gb=round(total_bucket_size, 2),
-            total_object_count=int(total_object_count),
-            all_requests_count=request_metrics["All"],
-            get_requests_count=request_metrics["Get"],
-            put_requests_count=request_metrics["Put"],
-            tags=bucket_tags,
-            check_type=self.check_type,
+            account_id=self.account_id,
+            details=details,
         )
 
     def _extract_replication_info(

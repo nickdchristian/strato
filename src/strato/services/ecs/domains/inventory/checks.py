@@ -1,13 +1,12 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import Any, cast
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.ecs.client import ECSClient
 
 logger = logging.getLogger(__name__)
@@ -18,64 +17,7 @@ class ECSInventoryScanType(StrEnum):
     INVENTORY = auto()
 
 
-@dataclass
-class ECSInventoryResult(AuditResult):
-    """Lean, actionable container for ECS Inventory."""
-
-    resource_arn: str = ""
-    resource_id: str = ""
-    resource_name: str = ""
-    cluster_name: str = ""
-    service_name: str = ""
-    account_id: str = "Unknown"
-    region: str = ""
-    vpc_id: str | None = None
-    tags: dict[str, str] = field(default_factory=dict)
-
-    task_definition: str = ""
-    launch_type: str = "UNKNOWN"
-    capacity_provider: str | None = None
-    spot_usage_percentage: float | None = None
-    cpu_allocated_vcpu: str | None = None
-    memory_allocated_gb: str | None = None
-
-    cpu_utilization_avg_30d: float = 0.0
-    cpu_utilization_peak_30d: float = 0.0
-    memory_utilization_avg_30d: float = 0.0
-    memory_utilization_peak_30d: float = 0.0
-
-    desired_tasks: int = 0
-    running_tasks: int = 0
-    task_restarts_30d: int | None = None
-    last_deployment_days_ago: int | None = None
-
-    total_cost_30d: float | None = None
-    rightsizing_recommendation: str | None = None
-    estimated_monthly_waste_usd: float | None = None
-    fargate_savings_potential: str | None = None
-
-    autoscaling_enabled: bool = False
-    scaling_events_30d: int | None = None
-    load_balancer_name: str | None = None
-    internet_facing: bool | None = None
-
-    security_findings_critical: int | None = None
-    security_findings_high: int | None = None
-    overly_permissive_iam_role: bool | None = None
-    encryption_enabled: bool | None = None
-    logging_enabled: bool = False
-    health_check_grace_period_seconds: int | None = None
-
-    check_type: str = ECSInventoryScanType.ALL
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        for key in ["findings", "status_score", "status"]:
-            data.pop(key, None)
-        return data
-
-
-class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
+class ECSInventoryScanner(BaseScanner[InventoryRecord]):
     is_global_service = False
 
     def __init__(
@@ -89,7 +31,7 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
 
     @property
     def service_name(self) -> str:
-        return f"ECS Inventory ({self.check_type})"
+        return "ECS Services"
 
     def fetch_resources(self) -> Iterable[dict[str, Any]]:
         clusters = self.client.list_clusters()
@@ -101,18 +43,14 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
                     svc["_ClusterArn"] = cluster_arn
                     yield svc
 
-    def analyze_resource(self, resource: Any) -> ECSInventoryResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         res_dict = cast(dict[str, Any], resource)
         cluster_arn = str(res_dict.get("_ClusterArn", ""))
         cluster_name = cluster_arn.split("/")[-1] if cluster_arn else "Unknown"
 
         service_arn = str(res_dict.get("serviceArn", ""))
         service_name = str(res_dict.get("serviceName", ""))
-        service_id = service_arn.split("/")[-1] if service_arn else service_name
 
-        logger.debug(
-            f"[{self.account_id}][{cluster_name} | {service_name}] Starting analysis..."
-        )
         raw_tags = res_dict.get("tags", [])
         tags_dict = (
             {str(t["key"]): str(t["value"]) for t in raw_tags} if raw_tags else {}
@@ -149,10 +87,6 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
             str(cp_strategy[0].get("capacityProvider", "")) if cp_strategy else None
         )
 
-        logger.debug(
-            f"[{self.account_id}] [{cluster_name} | {service_name}] "
-            f"Fetching 30-day trailing metrics..."
-        )
         cpu_metrics = self.client.get_service_metric(
             cluster_name, service_name, "CPUUtilization"
         )
@@ -182,37 +116,37 @@ class ECSInventoryScanner(BaseScanner[ECSInventoryResult]):
             else region_fallback
         )
 
-        logger.debug(
-            f"[{self.account_id}][{cluster_name} | {service_name}] Analysis complete."
-        )
-        return ECSInventoryResult(
-            resource_arn=service_arn,
-            resource_id=service_id,
-            resource_name=service_name,
-            cluster_name=cluster_name,
-            service_name=service_name,
-            account_id=self.account_id,
-            region=parsed_region,
-            tags=tags_dict,
-            task_definition=task_def_arn.split("/")[-1] if task_def_arn else "Unknown",
-            launch_type=str(res_dict.get("launchType", "CAPACITY_PROVIDER")),
-            capacity_provider=primary_cp,
-            cpu_allocated_vcpu=str(cpu_alloc) if cpu_alloc else None,
-            memory_allocated_gb=str(mem_alloc) if mem_alloc else None,
-            cpu_utilization_avg_30d=cpu_metrics["avg"],
-            cpu_utilization_peak_30d=cpu_metrics["max"],
-            memory_utilization_avg_30d=mem_metrics["avg"],
-            memory_utilization_peak_30d=mem_metrics["max"],
-            desired_tasks=int(res_dict.get("desiredCount", 0)),
-            running_tasks=int(res_dict.get("runningCount", 0)),
-            last_deployment_days_ago=days_ago,
-            rightsizing_recommendation=recommendation,
-            load_balancer_name=";".join(lb_names) if lb_names else None,
-            health_check_grace_period_seconds=res_dict.get(
+        details = {
+            "ClusterName": cluster_name,
+            "TaskDefinition": task_def_arn.split("/")[-1]
+            if task_def_arn
+            else "Unknown",
+            "LaunchType": str(res_dict.get("launchType", "CAPACITY_PROVIDER")),
+            "CapacityProvider": primary_cp,
+            "CpuAllocatedVcpu": str(cpu_alloc) if cpu_alloc else None,
+            "MemoryAllocatedGb": str(mem_alloc) if mem_alloc else None,
+            "CpuUtilizationAvg30d": cpu_metrics["avg"],
+            "CpuUtilizationPeak30d": cpu_metrics["max"],
+            "MemoryUtilizationAvg30d": mem_metrics["avg"],
+            "MemoryUtilizationPeak30d": mem_metrics["max"],
+            "DesiredTasks": int(res_dict.get("desiredCount", 0)),
+            "RunningTasks": int(res_dict.get("runningCount", 0)),
+            "LastDeploymentDaysAgo": days_ago,
+            "RightsizingRecommendation": recommendation,
+            "LoadBalancerNames": lb_names,
+            "HealthCheckGracePeriodSeconds": res_dict.get(
                 "healthCheckGracePeriodSeconds"
             ),
-            logging_enabled=logging_enabled,
-            autoscaling_enabled=autoscaling_enabled,
-            scaling_events_30d=scaling_events_30d,
-            check_type=self.check_type,
+            "LoggingEnabled": logging_enabled,
+            "AutoscalingEnabled": autoscaling_enabled,
+            "ScalingEvents30d": scaling_events_30d,
+            "Tags": tags_dict,
+        }
+
+        return InventoryRecord(
+            resource_arn=service_arn,
+            resource_name=service_name,
+            region=parsed_region,
+            account_id=self.account_id,
+            details=details,
         )

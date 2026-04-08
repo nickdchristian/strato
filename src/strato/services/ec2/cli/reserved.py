@@ -24,24 +24,12 @@ def create_scan_command(target_scan_type: EC2ReservedScanType, command_help_text
             None, "--org-role", help="IAM role to assume for multi-account scan"
         ),
     ):
-        if not (json_output or csv_output):
-            console_err.print(
-                """\n[bold red]
-                Error:[/bold red] Inventory data is too wide for table output."""
-            )
-            console_err.print(
-                """Please specify a structured format:
-                    [green]--json[/green] or [green]--csv[/green]\n"""
-            )
-            raise typer.Exit(1)
-
         scan_code = run_scan(
             scanner_cls=EC2ReservedInstanceScanner,
             check_type=target_scan_type,
             verbose=verbose,
             json_output=json_output,
             csv_output=csv_output,
-            failures_only=False,
             org_role=org_role,
             view_class=EC2ReservedInstanceView,
             region=region,

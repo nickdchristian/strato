@@ -1,28 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from strato.services.ecs.domains.inventory.checks import (
-    ECSInventoryResult,
-    ECSInventoryScanner,
-)
-
-
-def test_result_serialization():
-    result = ECSInventoryResult(
-        resource_arn="arn:aws:ecs:us-east-1:123:service/cluster/svc",
-        resource_id="svc",
-        service_name="test-svc",
-        cluster_name="test-cluster",
-        cpu_utilization_avg_30d=15.5,
-        tags={"Env": "Test"},
-    )
-
-    data = result.to_dict()
-
-    assert "findings" not in data
-    assert "status_score" not in data
-    assert data["service_name"] == "test-svc"
-    assert data["cpu_utilization_avg_30d"] == 15.5
-    assert data["tags"] == {"Env": "Test"}
+from strato.core.models import InventoryRecord
+from strato.services.ecs.domains.inventory.checks import ECSInventoryScanner
 
 
 def test_scanner_analyze_resource(mocker):
@@ -45,7 +24,10 @@ def test_scanner_analyze_resource(mocker):
     mock_client.is_autoscaling_enabled.return_value = True
     mock_client.get_scaling_events_count.return_value = 3
 
-    scanner = ECSInventoryScanner(account_id="123")
+    mock_session = mocker.Mock()
+    mock_session.region_name = "us-west-2"
+
+    scanner = ECSInventoryScanner(account_id="123", session=mock_session)
 
     recent_deploy = datetime.now(UTC) - timedelta(days=2)
 
@@ -65,30 +47,31 @@ def test_scanner_analyze_resource(mocker):
 
     result = scanner.analyze_resource(resource_data)
 
-    assert isinstance(result, ECSInventoryResult)
-    assert result.cluster_name == "prod-cluster"
-    assert result.service_name == "web-svc"
-    assert result.resource_id == "web-svc"
+    assert isinstance(result, InventoryRecord)
+    assert result.resource_name == "web-svc"
+    assert (
+        result.resource_arn == "arn:aws:ecs:us-west-2:123:service/prod-cluster/web-svc"
+    )
     assert result.region == "us-west-2"
-    assert result.tags == {"Project": "Apollo"}
 
-    assert result.task_definition == "web-task:10"
-    assert result.cpu_allocated_vcpu == "512"
-    assert result.memory_allocated_gb == "1024"
-    assert result.logging_enabled is True
+    d = result.details
+    assert d["ClusterName"] == "prod-cluster"
+    assert d["TaskDefinition"] == "web-task:10"
+    assert d["CpuAllocatedVcpu"] == "512"
+    assert d["MemoryAllocatedGb"] == "1024"
+    assert d["LoggingEnabled"] is True
 
-    assert result.load_balancer_name == "web-tg"
-    assert result.health_check_grace_period_seconds == 120
-    assert result.last_deployment_days_ago == 2
+    assert d["LoadBalancerNames"] == ["web-tg"]
+    assert d["HealthCheckGracePeriodSeconds"] == 120
+    assert d["LastDeploymentDaysAgo"] == 2
 
-    assert result.cpu_utilization_avg_30d == 10.0
-    assert result.memory_utilization_peak_30d == 28.0
+    assert d["CpuUtilizationAvg30d"] == 10.0
+    assert d["MemoryUtilizationPeak30d"] == 28.0
 
-    # Check recommendation logic triggered by < 30 max thresholds
-    assert result.rightsizing_recommendation == "Underutilized (Scale In / Downsize)"
-
-    assert result.autoscaling_enabled is True
-    assert result.scaling_events_30d == 3
+    assert d["RightsizingRecommendation"] == "Underutilized (Scale In / Downsize)"
+    assert d["AutoscalingEnabled"] is True
+    assert d["ScalingEvents30d"] == 3
+    assert d["Tags"] == {"Project": "Apollo"}
 
 
 def test_scanner_analyze_resource_overutilized(mocker):
@@ -105,7 +88,10 @@ def test_scanner_analyze_resource_overutilized(mocker):
     ]
     mock_client.is_autoscaling_enabled.return_value = False
 
-    scanner = ECSInventoryScanner(account_id="999")
+    mock_session = mocker.Mock()
+    mock_session.region_name = "us-east-1"
+
+    scanner = ECSInventoryScanner(account_id="999", session=mock_session)
 
     resource_data = {
         "_ClusterArn": "arn:aws:ecs:us-east-1:999:cluster/batch-cluster",
@@ -114,6 +100,9 @@ def test_scanner_analyze_resource_overutilized(mocker):
 
     result = scanner.analyze_resource(resource_data)
 
-    assert result.rightsizing_recommendation == "Overutilized (Scale Out / Upsize)"
-    assert result.autoscaling_enabled is False
-    assert result.scaling_events_30d == 0
+    assert (
+        result.details["RightsizingRecommendation"]
+        == "Overutilized (Scale Out / Upsize)"
+    )
+    assert result.details["AutoscalingEnabled"] is False
+    assert result.details["ScalingEvents30d"] == 0

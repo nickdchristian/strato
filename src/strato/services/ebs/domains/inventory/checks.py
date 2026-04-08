@@ -1,13 +1,12 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import Any
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.ebs.client import EBSClient
 
 logger = logging.getLogger(__name__)
@@ -18,78 +17,23 @@ class EBSInventoryScanType(StrEnum):
     VOLUMES = auto()
 
 
-@dataclass
-class EBSInventoryResult(AuditResult):
-    account_id: str = "Unknown"
-    region: str = ""
-    resource_name: str = ""
-    resource_id: str = ""
-    volume_id: str = ""
-    type: str | None = None
-    size: int = 0
-    iops: int | None = None
-    throughput: int | None = None
-    availability_zone: str | None = None
-    create_date: datetime | None = None
-    multi_attach_enabled: bool = False
-    outposts_arn: str | None = None
-    encrypted: bool = False
-    kms_key_id: str | None = None
-    kms_key_alias: str | None = None
-    attached_resources: list[str] = field(default_factory=list)
-    instance_states: list[str] = field(default_factory=list)
-    state: str = "available"
-    owner: str = ""
-    costcenter: str = ""
-    environment: str = ""
-    projectname: str = ""
-    application: str = ""
-    account_email: str = "Unknown"
-    tags: dict[str, str] = field(default_factory=dict)
-    utilization_percentage_30_days: float = 0.0
-    iops_utilization_30_days: float = 0.0
-    last_accessed_date: str | None = None
-    stopped_instance_activity_90_days: bool = False
-    managed: bool = False
-    alarm_status: str = "Unknown"
-    snapshot_count: int = 0
-    snapshot_costs: float = 0.0
-    cost_per_gb_month: float = 0.0
-    total_monthly_cost: float = 0.0
-    billing_mode: str = "provisioned"
-    burst_credit_balance: str | None = None
-    right_sizing_recommendation: str | None = None
-    type_optimization_recommendation: str | None = None
-    cost_optimization_potential: float = 0.0
-    estimated_monthly_savings: float = 0.0
-    unused_volume_flag: bool = False
-    overprovisioned_flag: bool = False
-    check_type: str = EBSInventoryScanType.ALL
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if self.create_date:
-            data["create_date"] = self.create_date.isoformat()
-
-        keys_to_remove = {"findings", "status_score", "status"}
-        return {k: v for k, v in data.items() if k not in keys_to_remove}
-
-
-class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
+class EBSInventoryScanner(BaseScanner[InventoryRecord]):
     PRICE_GP3_GB = 0.08
     PRICE_GP2_GB = 0.10
     GP3_FREE_IOPS = 3000
     GP3_FREE_THROUGHPUT = 125
 
+    is_global_service = False
+
     @property
     def service_name(self) -> str:
-        return f"EBS Inventory ({self.check_type})"
+        return "EBS Volumes"
 
     def __init__(
         self,
-        check_type: str,
-        session: boto3.Session,
-        account_id: str,
+        check_type: str = "ALL",
+        session: boto3.Session | None = None,
+        account_id: str = "Unknown",
     ):
         super().__init__(check_type, session, account_id)
         self.client = EBSClient(session=self.session, account_id=self.account_id)
@@ -154,15 +98,14 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
             return round((float(size_gb) * 0.125) + (float(iops) * 0.065), 2)
         return 0.0
 
-    def analyze_resource(self, resource: Any) -> EBSInventoryResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         vol_data = resource
         vol_id = str(vol_data.get("VolumeId", ""))
         region = str(vol_data.get("Region", "Unknown"))
         vol_arn = f"arn:aws:ec2:{region}:{self.account_id}:volume/{vol_id}"
 
-        logger.debug(f"[{self.account_id}][{vol_id}] Starting analysis...")
         raw_vol_type = vol_data.get("VolumeType")
-        vol_type = str(raw_vol_type) if raw_vol_type else None
+        vol_type = str(raw_vol_type) if raw_vol_type else "Unknown"
 
         size_gb = int(vol_data.get("Size") or 0)
         iops = int(vol_data.get("Iops") or 0)
@@ -186,36 +129,39 @@ class EBSInventoryScanner(BaseScanner[EBSInventoryResult]):
         )
 
         rec = self.recommendations.get(vol_arn) or {}
+        create_date = vol_data.get("CreateTime")
+        create_date_str = (
+            create_date.isoformat()
+            if isinstance(create_date, datetime)
+            else str(create_date)
+        )
 
-        logger.debug(f"[{self.account_id}][{vol_id}] Analysis complete.")
+        details = {
+            "VolumeId": vol_id,
+            "VolumeType": vol_type,
+            "SizeGB": size_gb,
+            "Iops": iops,
+            "Throughput": throughput,
+            "AvailabilityZone": vol_data.get("AvailabilityZone"),
+            "CreateDate": create_date_str,
+            "Encrypted": bool(vol_data.get("Encrypted", False)),
+            "KmsKeyId": vol_data.get("KmsKeyId"),
+            "KmsKeyAlias": self.client.get_kms_alias(vol_data.get("KmsKeyId")),
+            "AttachedInstances": attached_ids,
+            "InstanceStates": instance_states,
+            "State": str(vol_data.get("State", "Unknown")),
+            "Tags": tags,
+            "UtilizationPct30d": util_pct,
+            "LastAccessed": last_accessed,
+            "SnapshotCount": len(self.snapshot_map.get(vol_id, [])),
+            "TotalMonthlyCost": monthly_cost,
+            "RightSizingRecommendation": rec.get("finding"),
+        }
 
-        return EBSInventoryResult(
-            account_id=self.account_id,
-            region=region,
-            resource_id=vol_id,
-            resource_name=tags.get("Name", vol_id),
+        return InventoryRecord(
             resource_arn=vol_arn,
-            volume_id=vol_id,
-            type=vol_type,
-            size=size_gb,
-            iops=vol_data.get("Iops"),
-            throughput=vol_data.get("Throughput"),
-            availability_zone=vol_data.get("AvailabilityZone"),
-            create_date=vol_data.get("CreateTime"),
-            encrypted=bool(vol_data.get("Encrypted", False)),
-            kms_key_id=vol_data.get("KmsKeyId"),
-            kms_key_alias=self.client.get_kms_alias(vol_data.get("KmsKeyId")),
-            attached_resources=attached_ids,
-            instance_states=instance_states,
-            state=str(vol_data.get("State", "Unknown")),
-            tags=tags,
-            utilization_percentage_30_days=util_pct,
-            last_accessed_date=last_accessed,
-            snapshot_count=len(self.snapshot_map.get(vol_id, [])),
-            total_monthly_cost=monthly_cost,
-            billing_mode=vol_type or "provisioned",
-            right_sizing_recommendation=rec.get("finding"),
-            unused_volume_flag=(len(attached_ids) == 0),
-            overprovisioned_flag=(util_pct < 1.0 and len(attached_ids) > 0),
-            check_type=self.check_type,
+            resource_name=tags.get("Name", vol_id),
+            region=region,
+            account_id=self.account_id,
+            details=details,
         )

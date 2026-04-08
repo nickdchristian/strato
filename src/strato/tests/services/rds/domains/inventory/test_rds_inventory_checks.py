@@ -1,27 +1,5 @@
-from strato.services.rds.domains.inventory.checks import (
-    RDSInventoryResult,
-    RDSInventoryScanner,
-)
-
-
-def test_result_serialization():
-    result = RDSInventoryResult(
-        resource_id="db-prod",
-        resource_name="db-prod",
-        region="us-east-1",
-        account_id="123",
-        port=5432,
-        security_group_ids=["sg-1", "sg-2"],
-        option_groups=["default:postgres"],
-    )
-
-    data = result.to_dict()
-
-    assert data["resource_id"] == "db-prod"
-    assert data["port"] == 5432
-    assert "findings" not in data
-    assert data["security_group_ids"] == ["sg-1", "sg-2"]
-    assert data["option_groups"] == ["default:postgres"]
+from strato.core.models import InventoryRecord
+from strato.services.rds.domains.inventory.checks import RDSInventoryScanner
 
 
 def test_scanner_analyze_resource(mocker):
@@ -36,7 +14,10 @@ def test_scanner_analyze_resource(mocker):
     mock_client.get_read_throughput.return_value = (500.0, 250.0)
     mock_client.get_write_throughput.return_value = (200.0, 100.0)
 
-    scanner = RDSInventoryScanner(account_id="123")
+    mock_session = mocker.Mock()
+    mock_session.region_name = "us-east-1"
+
+    scanner = RDSInventoryScanner(account_id="123", session=mock_session)
 
     resource_data = {
         "DBInstanceIdentifier": "db-prod",
@@ -59,17 +40,20 @@ def test_scanner_analyze_resource(mocker):
 
     result = scanner.analyze_resource(resource_data)
 
-    assert isinstance(result, RDSInventoryResult)
-    assert result.resource_id == "db-prod"
-    assert result.engine == "postgres"
-    assert result.port == 5432
-    assert result.publicly_accessible is True
-    assert result.security_group_ids == ["sg-1"]
+    assert isinstance(result, InventoryRecord)
+    assert result.resource_name == "db-prod"
+    assert result.resource_arn == "arn:aws:rds:us-east-1:123:db:db-prod"
+    assert result.region == "us-east-1"
 
-    assert result.peak_cpu_utilization_90_days == 80.0
-    assert result.mean_cpu_utilization_90_days == 40.0
+    d = result.details
+    assert d["Engine"] == "postgres"
+    assert d["Port"] == 5432
+    assert d["PubliclyAccessible"] is True
+    assert d["SecurityGroupIds"] == ["sg-1"]
 
-    assert result.peak_database_connections_90_days == 100.0
-    assert result.mean_database_connections_90_days == 10.0
+    assert d["PeakCpu90d"] == 80.0
+    assert d["MeanCpu90d"] == 40.0
+    assert d["PeakConnections90d"] == 100.0
+    assert d["MeanConnections90d"] == 10.0
 
-    assert result.tags["Env"] == "Prod"
+    assert d["Tags"] == {"Env": "Prod"}

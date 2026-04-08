@@ -3,8 +3,8 @@ from io import StringIO
 
 from rich.console import Console
 
-from strato.core.models import AuditResult, BaseScanner
-from strato.core.presenter import AuditPresenter
+from strato.core.models import BaseScanner, InventoryRecord
+from strato.core.presenter import InventoryPresenter
 
 
 class MockScanner(BaseScanner):
@@ -16,12 +16,12 @@ class MockScanner(BaseScanner):
         return ["res1", "res2", "res3"]
 
     def analyze_resource(self, resource):
-        return AuditResult(
+        return InventoryRecord(
             resource_arn=f"arn:{resource}",
             resource_name=resource,
             region="us-east-1",
-            status_score=100 if resource == "res2" else 0,
-            findings=["Bad thing"] if resource == "res2" else [],
+            account_id="123456789012",
+            details={"mock_key": "mock_value"} if resource == "res2" else {},
         )
 
 
@@ -30,44 +30,52 @@ def test_base_scanner_threading():
     results = scanner.scan(silent=True)
 
     assert len(results) == 3
-    assert isinstance(results[0], AuditResult)
-    failures = [r for r in results if r.is_violation]
-    assert len(failures) == 1
-    assert failures[0].resource_name == "res2"
-    assert failures[0].status == "CRITICAL"
+    assert isinstance(results[0], InventoryRecord)
+
+    # Verify the specific details dictionary logic worked
+    res2 = next(r for r in results if r.resource_name == "res2")
+    assert res2.details.get("mock_key") == "mock_value"
 
 
-def test_presenter_json(mocker, capsys):
+def test_presenter_json(mocker):
     results = [
-        AuditResult("arn:1", "bucket1", "us-east-1", status_score=0),
-        AuditResult(
-            "arn:2", "bucket2", "us-east-1", status_score=50, findings=["Risk"]
+        InventoryRecord(
+            "arn:1", "bucket1", "us-east-1", "123", details={"env": "prod"}
         ),
+        InventoryRecord("arn:2", "bucket2", "us-east-1", "123", details={"env": "dev"}),
     ]
 
-    # Use standard console but capture it; force_terminal=False helps reduce codes
+    string_buffer = StringIO()
+
     mock_console = Console(
-        file=StringIO(), force_terminal=False, width=1000, no_color=True
+        file=string_buffer, force_terminal=False, width=1000, no_color=True
     )
     mocker.patch("strato.core.presenter.console_out", mock_console)
 
-    presenter = AuditPresenter(results)
+    presenter = InventoryPresenter(results)
     presenter.print_json()
 
-    output = mock_console.file.getvalue()
+    output = string_buffer.getvalue()
 
     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
     clean_output = ansi_escape.sub("", output)
 
     assert '"resource_name": "bucket1"' in clean_output
-    assert '"status_score": 50' in clean_output
+    assert '"env": "prod"' in clean_output
+    assert '"env": "dev"' in clean_output
 
 
 def test_presenter_csv(capsys):
-    results = [AuditResult("arn:1", "bucket1", "us-east-1", status_score=0)]
-    presenter = AuditPresenter(results)
+    results = [
+        InventoryRecord(
+            "arn:1", "bucket1", "us-east-1", "Unknown", details={"key": "val"}
+        )
+    ]
+    presenter = InventoryPresenter(results)
     presenter.print_csv()
 
     captured = capsys.readouterr()
-    assert "Account ID,Resource,Region,Status,Findings" in captured.out
-    assert "Unknown,bucket1,us-east-1,PASS," in captured.out
+
+    # Verify the generic CSV headers and formatted row
+    assert "Account ID,Resource,Region,Details" in captured.out
+    assert 'Unknown,bucket1,us-east-1,"{""key"": ""val""}"' in captured.out
