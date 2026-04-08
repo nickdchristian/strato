@@ -8,8 +8,8 @@ from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 from rich.console import Console
 from rich.logging import RichHandler
 
-from strato.core.models import AuditResult, BaseScanner
-from strato.core.presenter import AuditPresenter
+from strato.core.models import BaseScanner, InventoryRecord
+from strato.core.presenter import InventoryPresenter
 
 console_err = Console(stderr=True)
 
@@ -83,7 +83,7 @@ def scan_single_account(
     scanner_cls: type[BaseScanner],
     check_type: str,
     region: str | None = None,
-) -> tuple[list[AuditResult], str | None]:
+) -> tuple[list[InventoryRecord], str | None]:
     try:
         if role_name:
             session = assume_role_session(account_id, role_name, region)
@@ -111,7 +111,7 @@ def _execute_multi_account_scan(
     check_type: str,
     org_role: str,
     region: str | None = None,
-) -> list[AuditResult]:
+) -> list[InventoryRecord]:
     if not scanner_cls.is_global_service:
         if not region and not boto3.Session().region_name:
             console_err.print(
@@ -177,7 +177,7 @@ def _execute_single_scan(
     check_type: str,
     region: str | None,
     silent_mode: bool,
-) -> list[AuditResult] | int:
+) -> list[InventoryRecord] | int:
     """Handles the heavy exception logic for a local credential scan."""
     sts = boto3.client("sts")
     current_account = "Unknown"
@@ -226,13 +226,12 @@ def _execute_single_scan(
 
 
 def _render_output(
-    presenter: AuditPresenter,
+    presenter: InventoryPresenter,
     scanner_cls: type[BaseScanner],
     check_type: str,
-    all_results: list[AuditResult],
+    all_results: list[InventoryRecord],
     json_output: bool,
     csv_output: bool,
-    failures_only: bool,
     org_role: str | None,
 ) -> int:
     """Handles the terminal output branching logic."""
@@ -242,16 +241,13 @@ def _render_output(
         presenter.print_csv()
     else:
         if all_results:
-            title_suffix = " [Failures Only]" if failures_only else ""
             title_prefix = "Organization " if org_role else ""
             presenter.print_table(
-                title=f"{title_prefix}{scanner_cls(check_type).service_name}{title_suffix}"
+                title=f"{title_prefix}{scanner_cls(check_type).service_name}"
             )
         else:
             console_err.print("[bold blue]No Results Found[/bold blue]")
 
-    if any(result.is_violation for result in all_results):
-        return 1
     return 0
 
 
@@ -261,11 +257,9 @@ def run_scan(
     verbose: bool,
     json_output: bool,
     csv_output: bool,
-    failures_only: bool,
     org_role: str | None = None,
     view_class: Any = None,
     region: str | None = None,
-    evaluator_cls: Any = None,
 ) -> int:
     setup_logging(verbose)
 
@@ -282,16 +276,7 @@ def run_scan(
 
     all_results = scan_output
 
-    if evaluator_cls:
-        for result in all_results:
-            score, findings = evaluator_cls.evaluate(result)
-            result.status_score = score
-            result.findings = findings
-
-    if failures_only:
-        all_results = [result for result in all_results if result.is_violation]
-
-    presenter = AuditPresenter(
+    presenter = InventoryPresenter(
         all_results,
         check_type=check_type,
         view_class=view_class,
@@ -304,6 +289,5 @@ def run_scan(
         all_results,
         json_output,
         csv_output,
-        failures_only,
         org_role,
     )

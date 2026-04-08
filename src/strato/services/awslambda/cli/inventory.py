@@ -44,7 +44,6 @@ def create_scan_command(
             verbose=verbose,
             json_output=json_output,
             csv_output=csv_output,
-            failures_only=False,
             org_role=org_role,
             view_class=LambdaInventoryView,
             region=region,

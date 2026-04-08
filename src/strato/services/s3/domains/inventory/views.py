@@ -1,14 +1,20 @@
-from typing import Any, cast
+import json
 
-from strato.core.models import AuditResult
-from strato.core.presenter import GenericView
-from strato.services.s3.domains.inventory.checks import S3InventoryResult
+from strato.core.models import InventoryRecord
 
 
-class S3InventoryView(GenericView):
+class S3InventoryView:
     @classmethod
     def get_headers(cls, check_type: str = "INVENTORY") -> list[str]:
-        return cls.get_csv_headers(check_type)
+        return [
+            "Account ID",
+            "Region",
+            "Bucket Name",
+            "Versioning",
+            "Encryption",
+            "Public Access Blocked",
+            "Total Size (GB)",
+        ]
 
     @classmethod
     def get_csv_headers(cls, check_type: str = "INVENTORY") -> list[str]:
@@ -16,6 +22,7 @@ class S3InventoryView(GenericView):
             "Account ID",
             "Region",
             "Bucket Name",
+            "Resource ARN",
             "Creation Date",
             "Encryption",
             "KMS Key ID",
@@ -54,62 +61,63 @@ class S3InventoryView(GenericView):
         ]
 
     @classmethod
-    def format_row(cls, result: AuditResult) -> list[str]:
-        return cls.format_csv_row(result)
+    def format_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
+        return [
+            result.account_id,
+            result.region,
+            result.resource_name,
+            str(d.get("VersioningStatus", "-")),
+            str(d.get("EncryptionType", "-")),
+            "Yes" if d.get("BlockAllPublicAccess") else "No",
+            str(d.get("TotalBucketSizeGb", 0)),
+        ]
 
     @classmethod
-    def format_csv_row(cls, result: AuditResult) -> list[str]:
-        s3_result = cast(S3InventoryResult, result)
-        tags_string = "; ".join(
-            f"{key}={value}" for key, value in s3_result.tags.items()
-        )
+    def format_csv_row(cls, result: InventoryRecord) -> list[str]:
+        d = result.details
 
-        creation_string = (
-            s3_result.creation_date.isoformat() if s3_result.creation_date else ""
-        )
-
-        def fmt(val: Any) -> str:
-            if val is None:
-                return ""
-            return str(val)
+        def fmt(val):
+            return "" if val is None else str(val)
 
         return [
-            s3_result.account_id,
-            s3_result.region,
-            s3_result.resource_name,
-            creation_string,
-            fmt(s3_result.encryption_type),
-            fmt(s3_result.kms_master_key_id),
-            str(s3_result.bucket_key_enabled),
-            s3_result.versioning_status,
-            s3_result.mfa_delete,
-            str(s3_result.block_all_public_access),
-            str(s3_result.has_bucket_policy),
-            fmt(s3_result.bucket_ownership),
-            fmt(s3_result.server_access_logging),
-            s3_result.static_website_hosting,
-            s3_result.transfer_acceleration,
-            s3_result.intelligent_tiering_config,
-            s3_result.object_lock,
-            fmt(s3_result.object_lock_mode),
-            fmt(s3_result.object_lock_retention),
-            s3_result.replication_status,
-            fmt(s3_result.replication_destination),
-            fmt(s3_result.replication_cost_impact),
-            s3_result.lifecycle_status,
-            str(s3_result.lifecycle_rule_count),
-            str(s3_result.total_bucket_size_gb),
-            str(s3_result.total_object_count),
-            str(s3_result.all_requests_count),
-            str(s3_result.get_requests_count),
-            str(s3_result.put_requests_count),
-            str(s3_result.standard_size_gb),
-            str(s3_result.standard_ia_size_gb),
-            str(s3_result.intelligent_tiering_size_gb),
-            str(s3_result.glacier_size_gb),
-            str(s3_result.deep_archive_size_gb),
-            str(s3_result.rrs_size_gb),
-            str(s3_result.glacier_object_count),
-            str(s3_result.deep_archive_object_count),
-            tags_string,
+            result.account_id,
+            result.region,
+            result.resource_name,
+            result.resource_arn,
+            fmt(d.get("CreationDate")),
+            fmt(d.get("EncryptionType")),
+            fmt(d.get("KmsMasterKeyId")),
+            fmt(d.get("BucketKeyEnabled")),
+            fmt(d.get("VersioningStatus")),
+            fmt(d.get("MfaDelete")),
+            fmt(d.get("BlockAllPublicAccess")),
+            fmt(d.get("HasBucketPolicy")),
+            fmt(d.get("BucketOwnership")),
+            fmt(d.get("ServerAccessLogging")),
+            fmt(d.get("StaticWebsiteHosting")),
+            fmt(d.get("TransferAcceleration")),
+            fmt(d.get("IntelligentTieringConfig")),
+            fmt(d.get("ObjectLock")),
+            fmt(d.get("ObjectLockMode")),
+            fmt(d.get("ObjectLockRetention")),
+            fmt(d.get("ReplicationStatus")),
+            fmt(d.get("ReplicationDestination")),
+            fmt(d.get("ReplicationCostImpact")),
+            fmt(d.get("LifecycleStatus")),
+            fmt(d.get("LifecycleRuleCount")),
+            fmt(d.get("TotalBucketSizeGb")),
+            fmt(d.get("TotalObjectCount")),
+            fmt(d.get("AllRequestsCount")),
+            fmt(d.get("GetRequestsCount")),
+            fmt(d.get("PutRequestsCount")),
+            fmt(d.get("StandardSizeGb")),
+            fmt(d.get("StandardIaSizeGb")),
+            fmt(d.get("IntelligentTieringSizeGb")),
+            fmt(d.get("GlacierSizeGb")),
+            fmt(d.get("DeepArchiveSizeGb")),
+            fmt(d.get("RrsSizeGb")),
+            fmt(d.get("GlacierObjectCount")),
+            fmt(d.get("DeepArchiveObjectCount")),
+            json.dumps(d.get("Tags", {})),
         ]

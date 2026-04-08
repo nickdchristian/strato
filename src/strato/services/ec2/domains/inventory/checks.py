@@ -1,13 +1,12 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.ec2.client import EC2Client
 
 logger = logging.getLogger(__name__)
@@ -18,78 +17,9 @@ class EC2InventoryScanType(StrEnum):
     INVENTORY = auto()
 
 
-@dataclass
-class EC2InventoryResult(AuditResult):
-    """
-    Data container for EC2 Inventory and Configuration details.
-    """
+class EC2InventoryScanner(BaseScanner[InventoryRecord]):
+    is_global_service = False
 
-    resource_arn: str = ""
-    resource_id: str = ""
-    resource_name: str = ""
-    region: str = ""
-    account_id: str = "Unknown"
-
-    instance_type: str | None = None
-    state: str | None = None
-    availability_zone: str | None = None
-    private_ip: str | None = None
-    private_ip6: str | None = None
-    public_ip4: str | None = None
-    elastic_ip: str | None = None
-    launch_time: datetime | None = None
-    platform: str | None = None
-    architecture: str | None = None
-    instance_lifecycle: str = "on-demand"
-    managed: bool = False
-
-    image_id: str | None = None
-    ami_name: str | None = None
-    ami_owner_alias: str | None = None
-    ami_create_date: str | None = None
-
-    vpc_id: str | None = None
-    subnet_id: str | None = None
-    root_device_type: str | None = None
-
-    highest_cpu_14_days: float = 0.0
-    highest_cpu_90_days: float = 0.0
-    highest_memory_14_days: float | None = None
-    highest_memory_90_days: float | None = None
-    network_util_14_days: float = 0.0
-    network_util_90_days: float = 0.0
-    rightsizing_recommendation: str | None = None
-
-    attached_volumes: int = 0
-    attached_volume_encryption_status: str = "Unknown"
-    delete_on_termination_status: bool = False
-
-    security_groups_count: int = 0
-    security_group_list: list[str] = field(default_factory=list)
-    security_group_inbound_ports: list[str] = field(default_factory=list)
-    security_group_outbound_ports: list[str] = field(default_factory=list)
-    iam_instance_profile: str | None = None
-    monitoring_enabled: str = "basic"
-    termination_protection: bool = False
-
-    tags: dict[str, str] = field(default_factory=dict)
-    check_type: str = EC2InventoryScanType.ALL
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serializes the result to a dictionary.
-        """
-        data = asdict(self)
-        if self.launch_time:
-            data["launch_time"] = self.launch_time.isoformat()
-
-        keys_to_remove = ["findings", "status_score", "status"]
-        for key in keys_to_remove:
-            data.pop(key, None)
-        return data
-
-
-class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
     def __init__(
         self,
         check_type: str = EC2InventoryScanType.ALL,
@@ -102,12 +32,12 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
 
     @property
     def service_name(self) -> str:
-        return f"EC2 Inventory ({self.check_type})"
+        return "EC2 Instances"
 
     def fetch_resources(self) -> Iterable[dict]:
         yield from self.client.list_instances()
 
-    def analyze_resource(self, resource: Any) -> EC2InventoryResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         instance_data = resource
         instance_id = str(instance_data.get("InstanceId", ""))
 
@@ -155,49 +85,60 @@ class EC2InventoryScanner(BaseScanner[EC2InventoryResult]):
         iam_profile_arn = instance_data.get("IamInstanceProfile", {}).get("Arn")
         iam_profile = iam_profile_arn.split("/")[-1] if iam_profile_arn else None
 
+        launch_time = instance_data.get("LaunchTime")
+        launch_time_str = (
+            launch_time.isoformat()
+            if isinstance(launch_time, datetime)
+            else str(launch_time)
+        )
+
         logger.debug(f"[{self.account_id}][{instance_id}] Analysis complete.")
 
-        return EC2InventoryResult(
-            account_id=self.account_id,
-            resource_id=instance_id,
-            resource_name=name_tag,
-            region=region,
-            instance_type=instance_data.get("InstanceType"),
-            state=instance_data.get("State", {}).get("Name"),
-            availability_zone=az,
-            private_ip=instance_data.get("PrivateIpAddress"),
-            public_ip4=instance_data.get("PublicIpAddress"),
-            launch_time=instance_data.get("LaunchTime"),
-            platform=instance_data.get("Platform", "linux"),
-            architecture=instance_data.get("Architecture"),
-            instance_lifecycle=instance_data.get("InstanceLifecycle", "on-demand"),
-            managed=self.client.is_instance_managed(instance_id),
-            image_id=instance_data.get("ImageId"),
-            ami_name=img_info.get("Name"),
-            ami_owner_alias=img_info.get("OwnerAlias"),
-            ami_create_date=img_info.get("CreationDate"),
-            vpc_id=instance_data.get("VpcId"),
-            subnet_id=instance_data.get("SubnetId"),
-            root_device_type=instance_data.get("RootDeviceType"),
-            highest_cpu_14_days=cpu_14,
-            highest_cpu_90_days=cpu_90,
-            highest_memory_14_days=mem_14,
-            highest_memory_90_days=mem_90,
-            network_util_14_days=net_14,
-            network_util_90_days=net_90,
-            rightsizing_recommendation=rightsizing,
-            attached_volumes=len(volume_ids),
-            attached_volume_encryption_status=enc_str,
-            delete_on_termination_status=False,
-            security_groups_count=len(sgs),
-            security_group_list=sg_ids,
-            security_group_inbound_ports=sg_rules["Inbound"],
-            security_group_outbound_ports=sg_rules["Outbound"],
-            iam_instance_profile=iam_profile,
-            monitoring_enabled=instance_data.get("Monitoring", {}).get(
+        details = {
+            "InstanceType": instance_data.get("InstanceType"),
+            "State": instance_data.get("State", {}).get("Name"),
+            "AvailabilityZone": az,
+            "PrivateIpAddress": instance_data.get("PrivateIpAddress"),
+            "PublicIpAddress": instance_data.get("PublicIpAddress"),
+            "LaunchTime": launch_time_str,
+            "Platform": instance_data.get("Platform", "linux"),
+            "Architecture": instance_data.get("Architecture"),
+            "InstanceLifecycle": instance_data.get("InstanceLifecycle", "on-demand"),
+            "ManagedBySSM": self.client.is_instance_managed(instance_id),
+            "ImageId": instance_data.get("ImageId"),
+            "AmiName": img_info.get("Name"),
+            "AmiOwnerAlias": img_info.get("OwnerAlias"),
+            "AmiCreateDate": img_info.get("CreationDate"),
+            "VpcId": instance_data.get("VpcId"),
+            "SubnetId": instance_data.get("SubnetId"),
+            "RootDeviceType": instance_data.get("RootDeviceType"),
+            "HighestCpu14d": cpu_14,
+            "HighestCpu90d": cpu_90,
+            "HighestMem14d": mem_14,
+            "HighestMem90d": mem_90,
+            "NetworkUtil14d": net_14,
+            "NetworkUtil90d": net_90,
+            "RightsizingRecommendation": rightsizing,
+            "AttachedVolumeCount": len(volume_ids),
+            "AttachedVolumeEncryption": enc_str,
+            "SecurityGroupCount": len(sgs),
+            "SecurityGroupIds": sg_ids,
+            "SecurityGroupInboundPorts": sg_rules["Inbound"],
+            "SecurityGroupOutboundPorts": sg_rules["Outbound"],
+            "IamInstanceProfile": iam_profile,
+            "MonitoringEnabled": instance_data.get("Monitoring", {}).get(
                 "State", "basic"
             ),
-            termination_protection=self.client.get_termination_protection(instance_id),
-            tags=tags,
-            check_type=self.check_type,
+            "TerminationProtection": self.client.get_termination_protection(
+                instance_id
+            ),
+            "Tags": tags,
+        }
+
+        return InventoryRecord(
+            resource_arn=f"arn:aws:ec2:{region}:{self.account_id}:instance/{instance_id}",
+            resource_name=name_tag,
+            region=region,
+            account_id=self.account_id,
+            details=details,
         )

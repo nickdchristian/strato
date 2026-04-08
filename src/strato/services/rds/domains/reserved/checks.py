@@ -1,13 +1,12 @@
 import logging
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import Any, cast
 
 import boto3
 
-from strato.core.models import AuditResult, BaseScanner
+from strato.core.models import BaseScanner, InventoryRecord
 from strato.services.rds.client import RDSClient
 
 logger = logging.getLogger(__name__)
@@ -17,40 +16,9 @@ class RDSReservedScanType(StrEnum):
     RESERVED_INSTANCES = auto()
 
 
-@dataclass
-class RDSReservedInstanceResult(AuditResult):
-    """
-    Data container for RDS Reserved Instances.
-    """
+class RDSReservedInstanceScanner(BaseScanner[InventoryRecord]):
+    is_global_service = False
 
-    account_id: str = "Unknown"
-    region: str = ""
-    reservation_id: str = ""
-    lease_id: str = ""
-    product: str = ""
-    class_type: str = ""
-    offering_type: str = ""
-    state: str = ""
-    multi_az: bool = False
-    start_date: str = ""
-    remaining_days: int = 0
-    quantity: int = 0
-
-    resource_arn: str = ""
-    resource_id: str = ""
-    resource_name: str = ""
-
-    check_type: str = RDSReservedScanType.RESERVED_INSTANCES
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        keys_to_remove = ["findings", "status_score", "status"]
-        for key in keys_to_remove:
-            data.pop(key, None)
-        return data
-
-
-class RDSReservedInstanceScanner(BaseScanner[RDSReservedInstanceResult]):
     def __init__(
         self,
         check_type: str = RDSReservedScanType.RESERVED_INSTANCES,
@@ -59,21 +27,19 @@ class RDSReservedInstanceScanner(BaseScanner[RDSReservedInstanceResult]):
     ):
         super().__init__(check_type, session, account_id)
         self.client = RDSClient(session=self.session, account_id=self.account_id)
-        logger.debug(f"Initialized RDSReservedInstanceScanner for account {account_id}")
 
     @property
     def service_name(self) -> str:
         return "RDS Reserved Instances"
 
     def fetch_resources(self) -> Iterable[dict[str, Any]]:
-        logger.debug("Requesting Reserved Instance list from AWS...")
         return self.client.get_reserved_instances()
 
-    def analyze_resource(self, resource: Any) -> RDSReservedInstanceResult:
+    def analyze_resource(self, resource: Any) -> InventoryRecord:
         ri_data = cast(dict[str, Any], resource)
         ri_id = str(ri_data.get("ReservedDBInstanceId", ""))
+        arn = str(ri_data.get("ReservedDBInstanceArn", ""))
 
-        logger.debug(f"[{ri_id}] Analyzing RI contract state and duration...")
         start_date = ri_data.get("StartTime")
         remaining_days = 0
         if isinstance(start_date, datetime):
@@ -82,26 +48,29 @@ class RDSReservedInstanceScanner(BaseScanner[RDSReservedInstanceResult]):
             remaining_days = max(0, duration // 86400 - elapsed)
 
         region = str(self.session.region_name or "Unknown")
+        start_str = start_date.isoformat() if isinstance(start_date, datetime) else ""
 
-        logger.debug(f"[{ri_id}] Analysis complete.")
+        details = {
+            "LeaseId": str(ri_data.get("LeaseId", "")),
+            "ProductDescription": str(ri_data.get("ProductDescription", "")),
+            "DBInstanceClass": str(ri_data.get("DBInstanceClass", "")),
+            "OfferingType": str(ri_data.get("OfferingType", "")),
+            "State": str(ri_data.get("State", "")),
+            "MultiAZ": bool(ri_data.get("MultiAZ", False)),
+            "StartTime": start_str,
+            "DurationSeconds": int(ri_data.get("Duration", 0)),
+            "RemainingDays": int(remaining_days),
+            "InstanceCount": int(ri_data.get("DBInstanceCount", 0)),
+            "FixedPrice": float(ri_data.get("FixedPrice", 0.0)),
+            "UsagePrice": float(ri_data.get("UsagePrice", 0.0)),
+            "CurrencyCode": str(ri_data.get("CurrencyCode", "")),
+            "RecurringCharges": ri_data.get("RecurringCharges", []),
+        }
 
-        return RDSReservedInstanceResult(
-            account_id=self.account_id,
-            region=region,
-            reservation_id=ri_id,
-            lease_id=str(ri_data.get("LeaseId", "")),
-            product=str(ri_data.get("ProductDescription", "")),
-            class_type=str(ri_data.get("DBInstanceClass", "")),
-            offering_type=str(ri_data.get("OfferingType", "")),
-            state=str(ri_data.get("State", "")),
-            multi_az=bool(ri_data.get("MultiAZ", False)),
-            start_date=start_date.isoformat()
-            if isinstance(start_date, datetime)
-            else "",
-            remaining_days=int(remaining_days),
-            quantity=int(ri_data.get("DBInstanceCount", 0)),
-            resource_id=ri_id,
+        return InventoryRecord(
+            resource_arn=arn,
             resource_name=ri_id,
-            resource_arn=str(ri_data.get("ReservedDBInstanceArn", "")),
-            check_type=self.check_type,
+            region=region,
+            account_id=self.account_id,
+            details=details,
         )

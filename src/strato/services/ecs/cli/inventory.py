@@ -8,7 +8,7 @@ from strato.services.ecs.domains.inventory.checks import (
 )
 from strato.services.ecs.domains.inventory.views import ECSInventoryView
 
-app = typer.Typer(help="ECS Inventory & Audit")
+app = typer.Typer(help="ECS Inventory")
 console_err = Console(stderr=True)
 
 
@@ -24,23 +24,12 @@ def create_scan_command(target_scan_type: ECSInventoryScanType, command_help_tex
             None, "--org-role", help="IAM role to assume for multi-account scan"
         ),
     ):
-        if not (json_output or csv_output):
-            console_err.print(
-                "\n[bold red]Error:[/bold red]"
-                " Inventory data requires structured format."
-            )
-            console_err.print(
-                "Please specify: [green]--json[/green] or [green]--csv[/green]\n"
-            )
-            raise typer.Exit(1)
-
         scan_code = run_scan(
             scanner_cls=ECSInventoryScanner,
             check_type=target_scan_type,
             verbose=verbose,
             json_output=json_output,
             csv_output=csv_output,
-            failures_only=False,
             org_role=org_role,
             view_class=ECSInventoryView,
             region=region,

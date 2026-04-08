@@ -39,205 +39,7 @@ $ sto s3 [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `security`: S3 Security Audits
 * `inventory`: S3 Inventory &amp; Cost Analysis
-
-### `sto s3 security`
-
-S3 Security Audits
-
-**Usage**:
-
-```console
-$ sto s3 security [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `all`: Run ALL S3 Security checks
-* `encryption`: Scan for Encryption configuration
-* `public-access`: Scan for Public Access Block configuration
-* `policy`: Scan for Bucket Policy compliance
-* `acls`: Scan for Legacy ACL usage and Log Delivery...
-* `versioning`: Scan for Versioning and MFA Delete...
-* `object-lock`: Scan for Object Lock configuration
-* `naming`: Scan for Predictable Bucket Names
-* `website`: Scan for Static Website Hosting configuration
-
-#### `sto s3 security all`
-
-Run ALL S3 Security checks
-
-**Usage**:
-
-```console
-$ sto s3 security all [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security encryption`
-
-Scan for Encryption configuration
-
-**Usage**:
-
-```console
-$ sto s3 security encryption [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security public-access`
-
-Scan for Public Access Block configuration
-
-**Usage**:
-
-```console
-$ sto s3 security public-access [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security policy`
-
-Scan for Bucket Policy compliance
-
-**Usage**:
-
-```console
-$ sto s3 security policy [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security acls`
-
-Scan for Legacy ACL usage and Log Delivery compliance
-
-**Usage**:
-
-```console
-$ sto s3 security acls [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security versioning`
-
-Scan for Versioning and MFA Delete configuration
-
-**Usage**:
-
-```console
-$ sto s3 security versioning [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security object-lock`
-
-Scan for Object Lock configuration
-
-**Usage**:
-
-```console
-$ sto s3 security object-lock [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security naming`
-
-Scan for Predictable Bucket Names
-
-**Usage**:
-
-```console
-$ sto s3 security naming [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
-
-#### `sto s3 security website`
-
-Scan for Static Website Hosting configuration
-
-**Usage**:
-
-```console
-$ sto s3 security website [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--failures-only`: Only display resources with risks
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
 
 ### `sto s3 inventory`
 
@@ -441,27 +243,7 @@ $ sto lambda inventory [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `all`: Run all scan.
 * `scan`: Gather a inventory of Lambda Functions
-
-#### `sto lambda inventory all`
-
-Run all scan.
-
-**Usage**:
-
-```console
-$ sto lambda inventory all [OPTIONS]
-```
-
-**Options**:
-
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`: Output raw JSON
-* `--csv`: Output CSV
-* `--region TEXT`: Specific AWS Region to scan
-* `--org-role TEXT`: IAM role to assume for multi-account scan
-* `--help`: Show this message and exit.
 
 #### `sto lambda inventory scan`
 
@@ -498,12 +280,12 @@ $ sto rds [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `inventory`: RDS Inventory &amp; Audit
+* `inventory`: RDS Inventory
 * `reserved`: RDS Reserved Instance Contracts
 
 ### `sto rds inventory`
 
-RDS Inventory &amp; Audit
+RDS Inventory
 
 **Usage**:
 
@@ -518,7 +300,7 @@ $ sto rds inventory [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `all`: Run all scan.
-* `scan`: Gather a comprehensive inventory of RDS...
+* `scan`: Gather inventory of RDS Instances
 
 #### `sto rds inventory all`
 
@@ -541,7 +323,7 @@ $ sto rds inventory all [OPTIONS]
 
 #### `sto rds inventory scan`
 
-Gather a comprehensive inventory of RDS Instances
+Gather inventory of RDS Instances
 
 **Usage**:
 
@@ -611,11 +393,11 @@ $ sto ebs [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `inventory`: EBS Volume Inventory &amp; Audit
+* `inventory`: EBS Volume Inventory
 
 ### `sto ebs inventory`
 
-EBS Volume Inventory &amp; Audit
+EBS Volume Inventory
 
 **Usage**:
 
@@ -664,11 +446,11 @@ $ sto ecs [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `inventory`: ECS Inventory &amp; Audit
+* `inventory`: ECS Inventory
 
 ### `sto ecs inventory`
 
-ECS Inventory &amp; Audit
+ECS Inventory
 
 **Usage**:
 
