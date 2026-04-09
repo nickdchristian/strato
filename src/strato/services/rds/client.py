@@ -1,64 +1,17 @@
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from strato.core.aws import safe_aws_call
+
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
-
-
-def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Callable:
-    """
-    Decorator to standardize AWS ClientError handling and inject hierarchical logging.
-    """
-    if safe_error_codes is None:
-        safe_error_codes = []
-
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
-            client_instance = args[0] if args else None
-            acc = getattr(client_instance, "account_id", "Unknown")
-            context = kwargs.get("db_identifier") or (args[1] if len(args) > 1 else "")
-            func_name = getattr(func, "__name__", "unknown_callable")
-            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
-
-            logger.debug(f"{prefix} {func_name}")
-
-            try:
-                return func(*args, **kwargs)
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code", "Unknown")
-
-                if error_code in safe_error_codes:
-                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
-                    return cast(T, default)
-
-                if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(
-                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
-                    )
-                return cast(T, default)
-            except Exception as e:
-                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
-                return cast(T, default)
-
-        return wrapper
-
-    return decorator
 
 
 class RDSClient:
-    """
-    Wrapper for Boto3 RDS and CloudWatch interactions.
-    """
-
     def __init__(
         self, session: boto3.Session | None = None, account_id: str = "Unknown"
     ):
@@ -86,7 +39,7 @@ class RDSClient:
         logger.debug(f"[{self.account_id}] Retrieved {len(ris)} Reserved DB instances.")
         return ris
 
-    @safe_aws_call(default=(0.0, 0.0))
+    @safe_aws_call(default=(0.0, 0.0), context_key=["db_identifier"])
     def get_cpu_utilization(
         self, db_identifier: str, days: int = 90
     ) -> tuple[float, float]:
@@ -94,7 +47,7 @@ class RDSClient:
             "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", db_identifier, days
         )
 
-    @safe_aws_call(default=(0.0, 0.0))
+    @safe_aws_call(default=(0.0, 0.0), context_key=["db_identifier"])
     def get_database_connections(
         self, db_identifier: str, days: int = 90
     ) -> tuple[float, float]:
@@ -106,7 +59,7 @@ class RDSClient:
             days,
         )
 
-    @safe_aws_call(default=(0.0, 0.0))
+    @safe_aws_call(default=(0.0, 0.0), context_key=["db_identifier"])
     def get_write_throughput(
         self, db_identifier: str, days: int = 90
     ) -> tuple[float, float]:
@@ -114,7 +67,7 @@ class RDSClient:
             "AWS/RDS", "WriteThroughput", "DBInstanceIdentifier", db_identifier, days
         )
 
-    @safe_aws_call(default=(0.0, 0.0))
+    @safe_aws_call(default=(0.0, 0.0), context_key=["db_identifier"])
     def get_read_throughput(
         self, db_identifier: str, days: int = 90
     ) -> tuple[float, float]:

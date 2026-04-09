@@ -1,80 +1,18 @@
 import json
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from strato.core.aws import safe_aws_call
+
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
-
-
-def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Callable:
-    """
-    Decorator to standardize AWS ClientError handling and inject hierarchical logging.
-    """
-    if safe_error_codes is None:
-        safe_error_codes = []
-
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
-            client_instance = args[0] if args else None
-            acc = getattr(client_instance, "account_id", "Unknown")
-
-            context = (
-                kwargs.get("Bucket")
-                or kwargs.get("bucket_name")
-                or kwargs.get("FunctionName")
-                or kwargs.get("VolumeId")
-                or kwargs.get("InstanceId")
-                or kwargs.get("image_id")
-                or kwargs.get("cluster_arn")
-                or kwargs.get("task_def_arn")
-                or kwargs.get("db_identifier")
-                or (args[1] if len(args) > 1 else "")
-            )
-
-            func_name = getattr(func, "__name__", "unknown_callable")
-
-            # Clean prefix without arrows
-            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
-
-            logger.debug(f"{prefix} {func_name}")
-
-            try:
-                return func(*args, **kwargs)
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code", "Unknown")
-
-                if error_code in safe_error_codes:
-                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
-                    return cast(T, default)
-
-                if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(
-                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
-                    )
-                return cast(T, default)
-            except Exception as e:
-                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
-                return cast(T, default)
-
-        return wrapper
-
-    return decorator
 
 
 class S3Client:
-    """
-    Wrapper for Boto3 S3 interactions.
-    """
-
     CRITICAL_LOG_PRINCIPALS = {
         "cloudtrail.amazonaws.com",
         "config.amazonaws.com",
@@ -135,7 +73,7 @@ class S3Client:
         except ClientError:
             return None
 
-    @safe_aws_call(default=False)
+    @safe_aws_call(default=False, context_key=["bucket_name", "Bucket"])
     def get_public_access_status(self, bucket_name: str) -> bool:
         response = self._client.get_public_access_block(Bucket=bucket_name)
         config = response.get("PublicAccessBlockConfiguration", {})
@@ -151,6 +89,7 @@ class S3Client:
     @safe_aws_call(
         default={"Access": "Unknown", "SSL_Enforced": False, "Log_Sources": []},
         safe_error_codes=["NoSuchBucketPolicy"],
+        context_key=["bucket_name", "Bucket"],
     )
     def get_bucket_policy(self, bucket_name: str) -> dict[str, Any]:
         assessment = {
@@ -212,6 +151,7 @@ class S3Client:
             "KMSMasterKeyID": None,
         },
         safe_error_codes=["ServerSideEncryptionConfigurationNotFoundError"],
+        context_key=["bucket_name", "Bucket"],
     )
     def get_encryption_status(self, bucket_name: str) -> dict[str, Any]:
         response = self._client.get_bucket_encryption(Bucket=bucket_name)
@@ -235,11 +175,11 @@ class S3Client:
             "SSECBlocked": "SSE-C" in rule.get("BlockedEncryptionTypes", []),
         }
 
-    @safe_aws_call(default={"Status": "Enabled", "Ownership": "Unknown"})
+    @safe_aws_call(
+        default={"Status": "Enabled", "Ownership": "Unknown"},
+        context_key=["bucket_name", "Bucket"],
+    )
     def get_acl_status(self, bucket_name: str) -> dict[str, str]:
-        """
-        Returns a dict with 'Status' (Enabled/Disabled) and the raw 'Ownership' type.
-        """
         response = self._client.get_bucket_ownership_controls(Bucket=bucket_name)
         rules = response.get("OwnershipControls", {}).get("Rules", [])
 
@@ -251,7 +191,7 @@ class S3Client:
 
         return {"Status": status, "Ownership": ownership}
 
-    @safe_aws_call(default=False)
+    @safe_aws_call(default=False, context_key=["bucket_name", "Bucket"])
     def is_log_target(self, bucket_name: str) -> bool:
         log_delivery_uri = "http://acs.amazonaws.com/groups/s3/LogDelivery"
         cf_canonical_user = (
@@ -270,7 +210,10 @@ class S3Client:
                 return True
         return False
 
-    @safe_aws_call(default={"Status": None, "MFADelete": False})
+    @safe_aws_call(
+        default={"Status": None, "MFADelete": False},
+        context_key=["bucket_name", "Bucket"],
+    )
     def get_versioning_status(self, bucket_name: str) -> dict[str, Any]:
         response = self._client.get_bucket_versioning(Bucket=bucket_name)
         return {
@@ -286,6 +229,7 @@ class S3Client:
             "RetentionYears": None,
         },
         safe_error_codes=["ObjectLockConfigurationNotFoundError"],
+        context_key=["bucket_name", "Bucket"],
     )
     def get_object_lock_details(self, bucket_name: str) -> dict[str, Any]:
         response = self._client.get_object_lock_configuration(Bucket=bucket_name)
@@ -305,40 +249,50 @@ class S3Client:
             result["RetentionYears"] = rule.get("Years")
         return result
 
-    @safe_aws_call(default=False, safe_error_codes=["NoSuchWebsiteConfiguration"])
+    @safe_aws_call(
+        default=False,
+        safe_error_codes=["NoSuchWebsiteConfiguration"],
+        context_key=["bucket_name", "Bucket"],
+    )
     def get_website_hosting_status(self, bucket_name: str) -> bool:
         self._client.get_bucket_website(Bucket=bucket_name)
         return True
 
-    @safe_aws_call(default=None)
+    @safe_aws_call(default=None, context_key=["bucket_name", "Bucket"])
     def get_logging_status(self, bucket_name: str) -> str | None:
         response = self._client.get_bucket_logging(Bucket=bucket_name)
         if "LoggingEnabled" in response:
             return response["LoggingEnabled"].get("TargetBucket")
         return None
 
-    @safe_aws_call(default="Suspended")
+    @safe_aws_call(default="Suspended", context_key=["bucket_name", "Bucket"])
     def get_accelerate_configuration(self, bucket_name: str) -> str:
         response = self._client.get_bucket_accelerate_configuration(Bucket=bucket_name)
         return response.get("Status", "Suspended")
 
-    @safe_aws_call(default={})
+    @safe_aws_call(default={}, context_key=["bucket_name", "Bucket"])
     def get_bucket_tags(self, bucket_name: str) -> dict[str, str]:
         response = self._client.get_bucket_tagging(Bucket=bucket_name)
         return {t["Key"]: t["Value"] for t in response.get("TagSet", [])}
 
-    @safe_aws_call(default="BucketOwner")
+    @safe_aws_call(default="BucketOwner", context_key=["bucket_name", "Bucket"])
     def get_request_payment(self, bucket_name: str) -> str:
         response = self._client.get_bucket_request_payment(Bucket=bucket_name)
         return response.get("Payer", "BucketOwner")
 
-    @safe_aws_call(default=0, safe_error_codes=["NoSuchCORSConfiguration"])
+    @safe_aws_call(
+        default=0,
+        safe_error_codes=["NoSuchCORSConfiguration"],
+        context_key=["bucket_name", "Bucket"],
+    )
     def get_cors_count(self, bucket_name: str) -> int:
         response = self._client.get_bucket_cors(Bucket=bucket_name)
         return len(response.get("CORSRules", []))
 
     @safe_aws_call(
-        default=[], safe_error_codes=["ReplicationConfigurationNotFoundError"]
+        default=[],
+        safe_error_codes=["ReplicationConfigurationNotFoundError"],
+        context_key=["bucket_name", "Bucket"],
     )
     def get_replication_configuration(self, bucket_name: str) -> list[dict[str, Any]]:
         response = self._client.get_bucket_replication(Bucket=bucket_name)
@@ -394,7 +348,11 @@ class S3Client:
 
         return list(impacts)
 
-    @safe_aws_call(default=[], safe_error_codes=["NoSuchLifecycleConfiguration"])
+    @safe_aws_call(
+        default=[],
+        safe_error_codes=["NoSuchLifecycleConfiguration"],
+        context_key=["bucket_name", "Bucket"],
+    )
     def get_lifecycle_configuration(self, bucket_name: str) -> list[dict[str, Any]]:
         response = self._client.get_bucket_lifecycle_configuration(Bucket=bucket_name)
         rules = response.get("Rules", [])
@@ -413,14 +371,14 @@ class S3Client:
             )
         return results
 
-    @safe_aws_call(default=[])
+    @safe_aws_call(default=[], context_key=["bucket_name", "Bucket"])
     def get_intelligent_tiering_configurations(self, bucket_name: str) -> list[str]:
         res = self._client.list_bucket_intelligent_tiering_configurations(
             Bucket=bucket_name
         )
         return [c.get("Id") for c in res.get("IntelligentTieringConfigurationList", [])]
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, context_key=["bucket_name", "Bucket"])
     def get_notification_configuration_count(self, bucket_name: str) -> int:
         res = self._client.get_bucket_notification_configuration(Bucket=bucket_name)
         keys = [
@@ -430,23 +388,22 @@ class S3Client:
         ]
         return sum(len(res.get(k, [])) for k in keys)
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, context_key=["bucket_name", "Bucket"])
     def get_inventory_configuration_count(self, bucket_name: str) -> int:
         res = self._client.list_bucket_inventory_configurations(Bucket=bucket_name)
         return len(res.get("InventoryConfigurationList", []))
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, context_key=["bucket_name", "Bucket"])
     def get_analytics_configuration_count(self, bucket_name: str) -> int:
         res = self._client.list_bucket_analytics_configurations(Bucket=bucket_name)
         return len(res.get("AnalyticsConfigurationList", []))
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, context_key=["bucket_name", "Bucket"])
     def get_metrics_configuration_count(self, bucket_name: str) -> int:
         res = self._client.list_bucket_metrics_configurations(Bucket=bucket_name)
         return len(res.get("MetricsConfigurationList", []))
 
     def get_bucket_metrics(self, bucket_name: str) -> dict[str, Any]:
-        # Formatted manually to match the decorator output
         logger.debug(
             f"[{self.account_id}][{bucket_name}] "
             "Fetching CloudWatch storage and "
