@@ -1,3 +1,5 @@
+from typing import Annotated
+
 import typer
 from rich.console import Console
 
@@ -14,13 +16,24 @@ console_err = Console(stderr=True)
 
 def create_scan_command(target_scan_type: S3InventoryScanType, command_help_text: str):
     def command(
-        verbose: bool = False,
-        json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
-        csv_output: bool = typer.Option(False, "--csv", help="Output CSV"),
-        org_role: str | None = typer.Option(
-            None, "--org-role", help="IAM role to assume for multi-account scan"
-        ),
+        ctx: typer.Context,
+        verbose: Annotated[
+            bool, typer.Option("--verbose", "-v", help="Enable verbose logging")
+        ] = False,
+        json_output: Annotated[
+            bool, typer.Option("--json", help="Output raw JSON")
+        ] = False,
+        csv_output: Annotated[bool, typer.Option("--csv", help="Output CSV")] = False,
+        org_role: Annotated[
+            str | None,
+            typer.Option(
+                "--org-role", help="IAM role to assume for multi-account scan"
+            ),
+        ] = None,
     ):
+        session = ctx.obj.get("session")
+        account_id = ctx.obj.get("account_id")
+
         scan_code = run_scan(
             scanner_cls=S3InventoryScanner,
             check_type=target_scan_type,
@@ -29,7 +42,9 @@ def create_scan_command(target_scan_type: S3InventoryScanType, command_help_text
             csv_output=csv_output,
             org_role=org_role,
             view_class=S3InventoryView,
-            region=None,
+            region=None,  # S3 is global, so region remains None
+            session=session,
+            account_id=account_id,
         )
 
         if scan_code != 0:

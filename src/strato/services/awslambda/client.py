@@ -1,70 +1,17 @@
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from strato.core.aws import safe_aws_call
+
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
-
-
-def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Callable:
-    """
-    Decorator to standardize AWS ClientError handling and inject hierarchical logging.
-    """
-    if safe_error_codes is None:
-        safe_error_codes = []
-
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
-            client_instance = args[0] if args else None
-            acc = getattr(client_instance, "account_id", "Unknown")
-
-            context = (
-                kwargs.get("FunctionName")
-                or kwargs.get("function_name")
-                or (args[1] if len(args) > 1 else "")
-            )
-
-            func_name = getattr(func, "__name__", "unknown_callable")
-            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
-
-            logger.debug(f"{prefix} {func_name}")
-
-            try:
-                return func(*args, **kwargs)
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code", "Unknown")
-
-                if error_code in safe_error_codes:
-                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
-                    return cast(T, default)
-
-                if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(
-                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
-                    )
-                return cast(T, default)
-            except Exception as e:
-                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
-                return cast(T, default)
-
-        return wrapper
-
-    return decorator
 
 
 class LambdaClient:
-    """
-    Wrapper for Boto3 Lambda, CloudWatch, and Logs interactions.
-    """
-
     def __init__(
         self, session: boto3.Session | None = None, account_id: str = "Unknown"
     ):
@@ -76,9 +23,6 @@ class LambdaClient:
         self._logs_client = self.session.client("logs", config=self.retry_config)
 
     def list_functions(self) -> list[dict[str, Any]]:
-        """
-        Pages through all Lambda functions in the region.
-        """
         logger.debug(f"[{self.account_id}] Paginating through all Lambda functions...")
         paginator = self._client.get_paginator("list_functions")
         functions = []
@@ -91,17 +35,14 @@ class LambdaClient:
         )
         return functions
 
-    @safe_aws_call(default=(None, None))
+    @safe_aws_call(default=(None, None), context_key=["function_name", "FunctionName"])
     def get_function_url_details(
         self, function_name: str
     ) -> tuple[str | None, str | None]:
-        """
-        Retrieves URL and AuthType.
-        """
         response = self._client.get_function_url_config(FunctionName=function_name)
         return response.get("FunctionUrl"), response.get("AuthType")
 
-    @safe_aws_call(default=[])
+    @safe_aws_call(default=[], context_key=["function_name", "FunctionName"])
     def get_function_aliases(self, function_name: str) -> list[str]:
         paginator = self._client.get_paginator("list_aliases")
         aliases = []
@@ -110,7 +51,7 @@ class LambdaClient:
                 aliases.append(alias.get("Name"))
         return aliases
 
-    @safe_aws_call(default=[])
+    @safe_aws_call(default=[], context_key=["function_name", "FunctionName"])
     def get_event_source_mappings(self, function_name: str) -> list[str]:
         paginator = self._client.get_paginator("list_event_source_mappings")
         mappings = []
@@ -119,12 +60,12 @@ class LambdaClient:
                 mappings.append(mapping.get("EventSourceArn") or mapping.get("UUID"))
         return mappings
 
-    @safe_aws_call(default={})
+    @safe_aws_call(default={}, context_key=["resource_arn", "Resource"])
     def get_tags(self, resource_arn: str) -> dict[str, str]:
         response = self._client.list_tags(Resource=resource_arn)
         return response.get("Tags", {})
 
-    @safe_aws_call(default=0)
+    @safe_aws_call(default=0, context_key=["log_group_name", "logGroupNamePrefix"])
     def get_log_retention(self, log_group_name: str) -> int:
         response = self._logs_client.describe_log_groups(
             logGroupNamePrefix=log_group_name, limit=1

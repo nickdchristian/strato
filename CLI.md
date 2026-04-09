@@ -10,6 +10,8 @@ $ sto [OPTIONS] COMMAND [ARGS]...
 
 **Options**:
 
+* `-p, --profile TEXT`: Specific AWS profile to use
+* `-r, --region TEXT`: Specific AWS region to target
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
@@ -72,7 +74,7 @@ $ sto s3 inventory all [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--org-role TEXT`: IAM role to assume for multi-account scan
@@ -90,7 +92,7 @@ $ sto s3 inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--org-role TEXT`: IAM role to assume for multi-account scan
@@ -146,7 +148,7 @@ $ sto ec2 inventory all [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -165,7 +167,7 @@ $ sto ec2 inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -202,7 +204,7 @@ $ sto ec2 reserved scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -257,7 +259,7 @@ $ sto lambda inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -314,7 +316,7 @@ $ sto rds inventory all [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan (e.g. us-east-1)
@@ -333,7 +335,7 @@ $ sto rds inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan (e.g. us-east-1)
@@ -370,7 +372,7 @@ $ sto rds reserved scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -423,11 +425,11 @@ $ sto ebs inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
-* `--json`
-* `--csv`
-* `--region TEXT`
-* `--org-role TEXT`
+* `-v, --verbose`: Enable verbose logging
+* `--json`: Output raw JSON
+* `--csv`: Output CSV
+* `--region TEXT`: Specific AWS Region to scan
+* `--org-role TEXT`: IAM role to assume for multi-account scan
 * `--help`: Show this message and exit.
 
 ## `sto ecs`
@@ -479,7 +481,7 @@ $ sto ecs inventory all [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan
@@ -498,7 +500,7 @@ $ sto ecs inventory scan [OPTIONS]
 
 **Options**:
 
-* `--verbose / --no-verbose`: [default: no-verbose]
+* `-v, --verbose`: Enable verbose logging
 * `--json`: Output raw JSON
 * `--csv`: Output CSV
 * `--region TEXT`: Specific AWS Region to scan

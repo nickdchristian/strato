@@ -1,62 +1,14 @@
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from strato.core.aws import safe_aws_call
+
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
-
-
-def safe_aws_call(default: Any, safe_error_codes: list[str] | None = None) -> Callable:
-    if safe_error_codes is None:
-        safe_error_codes = []
-
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
-            client_instance = args[0] if args else None
-            acc = getattr(client_instance, "account_id", "Unknown")
-
-            context = (
-                kwargs.get("VolumeId")
-                or kwargs.get("volume_id")
-                or kwargs.get("SnapshotId")
-                or kwargs.get("snapshot_id")
-                or (args[1] if len(args) > 1 else "")
-            )
-
-            func_name = getattr(func, "__name__", "unknown_callable")
-            prefix = f"[{acc}]" + (f"[{context}]" if context else "")
-
-            logger.debug(f"{prefix} {func_name}")
-
-            try:
-                return func(*args, **kwargs)
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code", "Unknown")
-
-                if error_code in safe_error_codes:
-                    logger.debug(f"{prefix} Safely caught expected: {error_code}")
-                    return cast(T, default)
-
-                if error_code not in ["AccessDeniedException", "InvalidParameter"]:
-                    logger.warning(
-                        "%s AWS Error in %s: %s - %s", prefix, func_name, error_code, e
-                    )
-                return cast(T, default)
-            except Exception as e:
-                logger.error("%s Unexpected error in %s: %s", prefix, func_name, e)
-                return cast(T, default)
-
-        return wrapper
-
-    return decorator
 
 
 class EBSClient:
@@ -82,7 +34,9 @@ class EBSClient:
         )
         return volumes
 
-    @safe_aws_call(default={})
+    @safe_aws_call(
+        default={}, context_key=["VolumeId", "volume_id", "SnapshotId", "snapshot_id"]
+    )
     def get_all_snapshots(self) -> dict[str, list[dict]]:
         logger.debug(
             f"[{self.account_id}] Fetching all owned EBS snapshots to map to volumes..."
@@ -99,7 +53,9 @@ class EBSClient:
         )
         return snapshot_map
 
-    @safe_aws_call(default={})
+    @safe_aws_call(
+        default={}, context_key=["VolumeId", "volume_id", "SnapshotId", "snapshot_id"]
+    )
     def get_instance_states(self) -> dict[str, str]:
         logger.debug(
             f"[{self.account_id}] Fetching EC2 instance states "
@@ -113,11 +69,10 @@ class EBSClient:
                     instance_map[instance["InstanceId"]] = instance["State"]["Name"]
         return instance_map
 
-    @safe_aws_call(default=None)
+    @safe_aws_call(
+        default=None, context_key=["VolumeId", "volume_id", "SnapshotId", "snapshot_id"]
+    )
     def get_kms_alias(self, key_id: str | None) -> str | None:
-        """
-        Resolves a KMS Key ID to its Alias.
-        """
         if not key_id:
             return None
 
@@ -145,7 +100,9 @@ class EBSClient:
             self._optimizer_enrolled = "Unavailable"
         return self._optimizer_enrolled
 
-    @safe_aws_call(default={})
+    @safe_aws_call(
+        default={}, context_key=["VolumeId", "volume_id", "SnapshotId", "snapshot_id"]
+    )
     def get_volume_recommendations(self, volume_arns: list[str]) -> dict[str, dict]:
         if not volume_arns or self.check_optimizer_enrollment() != "Active":
             logger.debug(

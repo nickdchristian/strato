@@ -8,11 +8,17 @@ from strato.services.rds.domains.inventory.checks import RDSInventoryScanType
 runner = CliRunner(mix_stderr=False)
 
 
-def invoke_scan(args):
+def invoke_scan(args, mock_context_obj=None):
     cmd = app.registered_commands[0].name if app.registered_commands else "scan"
-    res = runner.invoke(app, [cmd] + args)
+
+    mock_context_obj = mock_context_obj or {
+        "session": mock.Mock(),
+        "account_id": "123456789012",
+    }
+
+    res = runner.invoke(app, [cmd] + args, obj=mock_context_obj)
     if res.exit_code == 2:
-        return runner.invoke(app, args)
+        return runner.invoke(app, args, obj=mock_context_obj)
     return res
 
 
