@@ -28,8 +28,9 @@ def setup_logging(verbose: bool):
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def get_org_accounts() -> list[dict]:
-    org_client = boto3.client("organizations")
+def get_org_accounts(session: boto3.Session) -> list[dict]:
+    """Fetches AWS Organization accounts using the globally authenticated session."""
+    org_client = session.client("organizations")
     accounts = []
     paginator = org_client.get_paginator("list_accounts")
 
@@ -44,8 +45,7 @@ def get_org_accounts() -> list[dict]:
     except NoRegionError:
         console_err.print(
             "[bold red]Error:[/bold red] No AWS region specified. "
-            "Please set "
-            "[green]AWS_DEFAULT_REGION[/green] or use the "
+            "Please set [green]AWS_DEFAULT_REGION[/green] or use the "
             "[green]--region[/green] flag."
         )
         sys.exit(1)
@@ -54,9 +54,13 @@ def get_org_accounts() -> list[dict]:
 
 
 def assume_role_session(
-    account_id: str, role_name: str, region: str | None = None
+    account_id: str,
+    role_name: str,
+    parent_session: boto3.Session,
+    region: str | None = None,
 ) -> boto3.Session | None:
-    sts_client = boto3.client("sts")
+    """Assumes a role in a target account using the parent session's credentials."""
+    sts_client = parent_session.client("sts")
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
 
     try:
@@ -68,7 +72,7 @@ def assume_role_session(
             aws_access_key_id=creds["AccessKeyId"],
             aws_secret_access_key=creds["SecretAccessKey"],
             aws_session_token=creds["SessionToken"],
-            region_name=region,
+            region_name=region or parent_session.region_name,
         )
     except ClientError:
         return None
@@ -82,15 +86,17 @@ def scan_single_account(
     role_name: str | None,
     scanner_cls: type[BaseScanner],
     check_type: str,
+    parent_session: boto3.Session,
     region: str | None = None,
 ) -> tuple[list[InventoryRecord], str | None]:
     try:
         if role_name:
-            session = assume_role_session(account_id, role_name, region)
+            session = assume_role_session(account_id, role_name, parent_session, region)
             if not session:
                 return [], f"Access Denied: {account_id} ({account_name})"
         else:
-            session = boto3.Session(region_name=region)
+            # Fallback to parent session if no role assumption is needed
+            session = parent_session
 
         scanner = scanner_cls(
             check_type=check_type, session=session, account_id=account_id
@@ -110,17 +116,16 @@ def _execute_multi_account_scan(
     scanner_cls: type[BaseScanner],
     check_type: str,
     org_role: str,
+    session: boto3.Session,
     region: str | None = None,
 ) -> list[InventoryRecord]:
     if not scanner_cls.is_global_service:
-        if not region and not boto3.Session().region_name:
+        if not region and not session.region_name:
             console_err.print(
                 "[bold red]"
                 "Configuration Error:"
                 "[/bold red] You must specify a region for multi-account scans.\n"
-                "Use the "
-                "[green]--region"
-                "[/green] flag or set the "
+                "Use the [green]--region[/green] flag or set the "
                 "[green]AWS_DEFAULT_REGION[/green] environment variable."
             )
             sys.exit(1)
@@ -128,7 +133,7 @@ def _execute_multi_account_scan(
     if scanner_cls.is_global_service and not region:
         region = "us-east-1"
 
-    accounts = get_org_accounts()
+    accounts = get_org_accounts(session)
     all_results = []
     skipped = []
 
@@ -149,6 +154,7 @@ def _execute_multi_account_scan(
                     org_role,
                     scanner_cls,
                     check_type,
+                    session,
                     region,
                 ): acc
                 for acc in accounts
@@ -177,27 +183,33 @@ def _execute_single_scan(
     check_type: str,
     region: str | None,
     silent_mode: bool,
+    session: boto3.Session,
+    account_id: str,
 ) -> list[InventoryRecord] | int:
-    """Handles the heavy exception logic for a local credential scan."""
-    sts = boto3.client("sts")
-    current_account = "Unknown"
-
+    """Handles the execution using the injected context session."""
     try:
-        current_account = sts.get_caller_identity()["Account"]
-    except (ClientError, NoCredentialsError, NoRegionError):
-        pass
+        # Override the session's region cleanly if a specific region was passed down
+        # and it differs from the globally set region
+        effective_region = region or session.region_name
 
-    try:
-        if scanner_cls.is_global_service and not region:
-            region = "us-east-1"
+        if scanner_cls.is_global_service and not effective_region:
+            effective_region = "us-east-1"
 
-        session = boto3.Session(region_name=region)
-
-        if not scanner_cls.is_global_service and not session.region_name:
+        if not scanner_cls.is_global_service and not effective_region:
             raise NoRegionError()
 
+        # If a region override is needed, recreate the session using the same creds
+        if effective_region and effective_region != session.region_name:
+            creds = session.get_credentials().get_frozen_credentials()
+            session = boto3.Session(
+                aws_access_key_id=creds.access_key,
+                aws_secret_access_key=creds.secret_key,
+                aws_session_token=creds.token,
+                region_name=effective_region,
+            )
+
         scanner = scanner_cls(
-            check_type=check_type, session=session, account_id=current_account
+            check_type=check_type, session=session, account_id=account_id
         )
         return scanner.scan(silent=silent_mode)
 
@@ -207,21 +219,18 @@ def _execute_single_scan(
         )
         console_err.print(
             "Please provide a region using the "
-            "[green]--region"
-            "[/green] flag or set the "
+            "[green]--region[/green] flag or set the "
             "[green]AWS_DEFAULT_REGION[/green] environment variable.\n"
         )
         return 1
     except ClientError as e:
         error_code = e.response["Error"]["Code"]
         console_err.print(
-            f"[bold red]AWS Error:[/bold red] {current_account} - {error_code}: {e}"
+            f"[bold red]AWS Error:[/bold red] {account_id} - {error_code}: {e}"
         )
         return 1
     except Exception as e:
-        console_err.print(
-            f"[bold red]Unexpected Error:[/bold red] {current_account} - {e}"
-        )
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {account_id} - {e}")
         return 1
 
 
@@ -260,16 +269,36 @@ def run_scan(
     org_role: str | None = None,
     view_class: Any = None,
     region: str | None = None,
+    session: boto3.Session | None = None,
+    account_id: str | None = None,
 ) -> int:
     setup_logging(verbose)
 
+    # Fallback logic for when tests/local functions call run_scan directly
+    if session is None:
+        session = boto3.Session(region_name=region)
+
+    # Strictly type-cast account_id to satisfy static analysis
+    resolved_account_id: str = "Unknown"
+    if account_id is not None:
+        resolved_account_id = str(account_id)
+    else:
+        try:
+            sts = session.client("sts")
+            fetched_account = sts.get_caller_identity().get("Account")
+            resolved_account_id = str(fetched_account) if fetched_account else "Unknown"
+        except (ClientError, NoCredentialsError, NoRegionError):
+            resolved_account_id = "Unknown"
+
     if org_role:
         scan_output = _execute_multi_account_scan(
-            scanner_cls, check_type, org_role, region
+            scanner_cls, check_type, org_role, session, region
         )
     else:
         silent_mode = json_output or csv_output
-        scan_output = _execute_single_scan(scanner_cls, check_type, region, silent_mode)
+        scan_output = _execute_single_scan(
+            scanner_cls, check_type, region, silent_mode, session, resolved_account_id
+        )
 
     if isinstance(scan_output, int):
         return scan_output
